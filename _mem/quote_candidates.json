@@ -1,0 +1,347 @@
+[
+ {
+  "slug": "background",
+  "kind": "quote",
+  "ids": [
+   124
+  ],
+  "text": "Online-first; graceful degradation ketika jaringan terputus"
+ },
+ {
+  "slug": "background",
+  "kind": "quote",
+  "ids": [
+   32
+  ],
+  "text": "Pemisahan tersebut meningkatkan risiko anggota tertinggal, informasi rute tidak sinkron, dan dokumentasi perjalanan tercecer."
+ },
+ {
+  "slug": "background",
+  "kind": "quote",
+  "ids": [
+   22
+  ],
+  "text": "Batas kapasitas dan hak paket yang terlihat diperlakukan sebagai indikasi, bukan spesifikasi resmi yang telah diverifikasi."
+ },
+ {
+  "slug": "background",
+  "kind": "quote",
+  "ids": [
+   22
+  ],
+  "text": "dokumen ini tidak mengklaim mengetahui seluruh alur layar, aturan backend, harga paket, konfigurasi keamanan, atau perilaku runtime aplikasi referensi"
+ },
+ {
+  "slug": "background",
+  "kind": "quote",
+  "ids": [
+   "RWD-01",
+   "RWD-02",
+   "RWD-03",
+   "RWD-04",
+   "RWD-05"
+  ],
+  "text": "jangan memberi poin untuk kecepatan tertinggi"
+ },
+ {
+  "slug": "architecture",
+  "kind": "quote",
+  "ids": [
+   521
+  ],
+  "text": "MVVM / Clean Architecture, repository pattern, use case untuk domain penting"
+ },
+ {
+  "slug": "architecture",
+  "kind": "quote",
+  "ids": [
+   521
+  ],
+  "text": "| Arsitektur | MVVM / Clean Architecture, repository pattern, use case untuk domain penting |"
+ },
+ {
+  "slug": "architecture",
+  "kind": "quote",
+  "ids": [
+   274
+  ],
+  "text": "Kapasitas ditetapkan di backend dan tidak dapat dimanipulasi aplikasi."
+ },
+ {
+  "slug": "architecture",
+  "kind": "quote",
+  "ids": [
+   270
+  ],
+  "text": "Hanya anggota konvoi aktif yang berhak melihat lokasi; status lokasi stale/offline terlihat."
+ },
+ {
+  "slug": "architecture",
+  "kind": "quote",
+  "ids": [
+   268
+  ],
+  "text": "Server memvalidasi kapasitas, status konvoi, dan kebijakan akses."
+ },
+ {
+  "slug": "architecture",
+  "kind": "quote",
+  "ids": [
+   162
+  ],
+  "text": "Role harus ditegakkan di backend."
+ },
+ {
+  "slug": "architecture",
+  "kind": "quote",
+  "ids": [
+   "SAF-01",
+   "SAF-02",
+   "SAF-03",
+   "SAF-04",
+   "SAF-05",
+   "SAF-06",
+   "SAF-07"
+  ],
+  "text": "Laporan bahaya memiliki TTL dan confidence score; laporan lama tidak tampil setara dengan laporan baru."
+ },
+ {
+  "slug": "architecture",
+  "kind": "quote",
+  "ids": [
+   "COM-01",
+   "COM-02",
+   "COM-03",
+   "COM-04",
+   "COM-05",
+   "COM-06"
+  ],
+  "text": "Semua event memerlukan autentikasi, validasi keanggotaan, sequence/timestamp, dan strategi reconnect."
+ },
+ {
+  "slug": "architecture",
+  "kind": "quote",
+  "ids": [
+   "COM-01",
+   "COM-02",
+   "COM-03",
+   "COM-04",
+   "COM-05",
+   "COM-06"
+  ],
+  "text": "Event lokasi tidak boleh disiarkan ke channel publik."
+ },
+ {
+  "slug": "architecture",
+  "kind": "quote",
+  "ids": [
+   "COM-01",
+   "COM-02",
+   "COM-03",
+   "COM-04",
+   "COM-05",
+   "COM-06"
+  ],
+  "text": "Daftar ini adalah rancangan endpoint baru"
+ },
+ {
+  "slug": "flow",
+  "kind": "quote",
+  "ids": [
+   "CNV-01",
+   "CNV-02",
+   "CNV-03",
+   "CNV-04",
+   "CNV-05",
+   "CNV-06",
+   "CNV-07",
+   "CNV-08"
+  ],
+  "text": "Lokasi dibagikan hanya dalam sesi konvoi yang sedang aktif dan kepada anggota yang berhak."
+ },
+ {
+  "slug": "flow",
+  "kind": "quote",
+  "ids": [
+   "CNV-01",
+   "CNV-02",
+   "CNV-03",
+   "CNV-04",
+   "CNV-05",
+   "CNV-06",
+   "CNV-07",
+   "CNV-08"
+  ],
+  "text": "Semua anggota menerima status sesi yang konsisten."
+ },
+ {
+  "slug": "flow",
+  "kind": "quote",
+  "ids": [
+   "COM-01",
+   "COM-02",
+   "COM-03",
+   "COM-04",
+   "COM-05",
+   "COM-06"
+  ],
+  "text": "UI menunjukkan reconnect dan tidak menggandakan pesan/anggota."
+ },
+ {
+  "slug": "flow",
+  "kind": "quote",
+  "ids": [
+   "CNV-01",
+   "CNV-02",
+   "CNV-03",
+   "CNV-04",
+   "CNV-05",
+   "CNV-06",
+   "CNV-07",
+   "CNV-08"
+  ],
+  "text": "Pengguna dapat menghentikan pembagian lokasi kapan saja melalui kontrol yang mudah ditemukan."
+ },
+ {
+  "slug": "flow",
+  "kind": "quote",
+  "ids": [
+   170
+  ],
+  "text": "**Beranda / Peta** — peta, posisi saat ini, pencarian lokasi, rute, dan akses cepat ke konvoi."
+ },
+ {
+  "slug": "flow",
+  "kind": "quote",
+  "ids": [
+   173
+  ],
+  "text": "**Konvoi** — konvoi aktif, undangan, chat, voice room, dan daftar anggota."
+ },
+ {
+  "slug": "mindmap",
+  "kind": "quote",
+  "ids": [
+   "CNV-01",
+   "CNV-02",
+   "CNV-03",
+   "CNV-04",
+   "CNV-05",
+   "CNV-06",
+   "CNV-07",
+   "CNV-08"
+  ],
+  "text": "Rider dapat membuat konvoi dengan nama, titik kumpul, tujuan, waypoint, waktu, dan kapasitas."
+ },
+ {
+  "slug": "mindmap",
+  "kind": "quote",
+  "ids": [
+   "CNV-01",
+   "CNV-02",
+   "CNV-03",
+   "CNV-04",
+   "CNV-05",
+   "CNV-06",
+   "CNV-07",
+   "CNV-08"
+  ],
+  "text": "Server memvalidasi kapasitas, status konvoi, dan kebijakan akses."
+ },
+ {
+  "slug": "mindmap",
+  "kind": "quote",
+  "ids": [
+   "COM-01",
+   "COM-02",
+   "COM-03",
+   "COM-04",
+   "COM-05",
+   "COM-06"
+  ],
+  "text": "Voice room mendukung push-to-talk (PTT)."
+ },
+ {
+  "slug": "mindmap",
+  "kind": "quote",
+  "ids": [
+   "COM-01",
+   "COM-02",
+   "COM-03",
+   "COM-04",
+   "COM-05",
+   "COM-06"
+  ],
+  "text": "Reconnect otomatis saat jaringan pulih."
+ },
+ {
+  "slug": "mindmap",
+  "kind": "quote",
+  "ids": [
+   170
+  ],
+  "text": "**Beranda / Peta** — peta, posisi saat ini, pencarian lokasi, rute, dan akses cepat ke konvoi."
+ },
+ {
+  "slug": "stack",
+  "kind": "quote",
+  "ids": [
+   519
+  ],
+  "text": "| Bahasa | Kotlin |"
+ },
+ {
+  "slug": "stack",
+  "kind": "quote",
+  "ids": [
+   521
+  ],
+  "text": "MVVM / Clean Architecture, repository pattern, use case untuk domain penting"
+ },
+ {
+  "slug": "stack",
+  "kind": "quote",
+  "ids": [
+   122
+  ],
+  "text": "Inggris setelah UX dan konten Indonesia stabil"
+ },
+ {
+  "slug": "stack",
+  "kind": "quote",
+  "ids": [
+   119
+  ],
+  "text": "Minimum OS | Android 8.0 (API 26)"
+ },
+ {
+  "slug": "roadmap",
+  "kind": "quote",
+  "ids": [
+   45
+  ],
+  "text": "Produk dibangun bertahap. Rilis pertama memprioritaskan keselamatan, keandalan GPS, navigasi, konvoi, dan riwayat."
+ },
+ {
+  "slug": "roadmap",
+  "kind": "quote",
+  "ids": [
+   56
+  ],
+  "text": "tanpa mengunci fungsi keselamatan dasar"
+ },
+ {
+  "slug": "roadmap",
+  "kind": "quote",
+  "ids": [
+   "SAF-01",
+   "SAF-02",
+   "SAF-03",
+   "SAF-04",
+   "SAF-05",
+   "SAF-06",
+   "SAF-07"
+  ],
+  "text": "Laporan bahaya memiliki TTL dan confidence score; laporan lama tidak tampil setara dengan laporan baru."
+ }
+]
