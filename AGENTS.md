@@ -120,3 +120,9 @@ The brain skills (`brain-setup`, `brain-page`, `brain-ingest`, `brain-bootstrap`
 
 If native notes/history are available, keep relevant brain page IDs and unresolved task state in notes; search history for earlier task evidence. After context rollover, re-read relevant pages through the CLI for current project facts. Do not copy task history into the brain.
 <!-- END brain.md -->
+
+```gitignore
+# Reference material, not part of the app: cloned or kept locally
+/cybersec-skills/
+/.checkpoint-phase3/
+```
