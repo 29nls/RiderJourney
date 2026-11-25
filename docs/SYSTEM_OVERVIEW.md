@@ -57,7 +57,9 @@ Fase mengikuti PRD 15. Prioritas mengikuti PRD 5 (`P0`, `P1`, `P2`).
 | Kapabilitas | Requirement | Prioritas | Fase PRD |
 |---|---|---|---|
 | Registrasi, login, sesi, consent, hapus akun | ACC-01…ACC-05 | P0 | 1 |
-| Profil rider, privasi, garasi kendaraan | RID-01…RID-03, VEH-01…VEH-03 | P0/P1 | 1 |
+| Profil rider, privasi, garasi dasar | RID-01, RID-02, VEH-01, VEH-03 | P0 | 1 |
+| Kendaraan tambahan dan kendaraan utama | VEH-02 | P1 | 2 |
+| Tema profil dan aset | RID-03 | P1 | 3 |
 | Peta, pencarian, waypoint, preview rute | MAP-01…MAP-05 | P0 | 1 |
 | Gaya peta, navigasi suara, peringatan rute | MAP-06…MAP-08 | P1 | 2 |
 | Peta 3D/premium | MAP-09 | P2 | 4 |
@@ -80,7 +82,7 @@ Fase mengikuti PRD 15. Prioritas mengikuti PRD 5 (`P0`, `P1`, `P2`).
 | Admin dan moderasi | PRD 5.14 | P0 (minimum) | 1 |
 | Cuaca dasar | MAP-08 | P1 | 2 |
 
-Fase 1 (MVP) adalah irisan P0 pada tabel di atas, sesuai PRD 15 Fase 1 dan acceptance gate PRD 14.3.
+Fase 1 (MVP) adalah irisan P0 pada tabel di atas, sesuai PRD 15 Fase 1 dan acceptance gate PRD 14.3. Pemetaan per requirement ID, dependensi, dan acceptance criteria ada di `REQUIREMENTS_MATRIX.md`.
 
 ## 5. Ruang lingkup yang tidak dikerjakan
 

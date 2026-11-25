@@ -167,3 +167,52 @@ Setiap laporan fase mencantumkan:
 - hal yang tidak dapat dijalankan beserta alasannya.
 
 Screenshot atau rekaman hanya bukti tambahan, bukan pengganti test otomatis.
+
+## 12. Bukti Fase 4 (dijalankan 2026-11-25)
+
+Perintah: `cd backend && npm test` (build TypeScript + seluruh `dist/test`).
+
+| Berkas | Cakupan | Hasil |
+|---|---|---|
+| `api.test.ts` | baseline auth, kendaraan, rute, trip, GPS noise | lulus |
+| `phase2.test.ts` | convoy realtime dan kapasitas | lulus |
+| `phase4.test.ts` | enam migrasi berurutan + tabel baru | lulus |
+| `phase4.social.test.ts` | audience private/public/followers/community, cross-user, feed & komentar pagination, idempotensi reaksi, save/mention/hashtag/report/block/mute, album quota/permission/moderation | lulus |
+| `phase4.replay.test.ts` | validasi ukuran/tipe/isi upload, signed URL akses + kedaluwarsa, replay gap/spike/low-accuracy + marker foto, poster SVG + export, poin/badge/leaderboard, preferensi notifikasi + rotate perangkat, hapus data sosial | lulus |
+
+Hasil: **23 test lulus, 0 gagal**. `node tools/junk-check.mjs` melaporkan 0 baris mencurigakan pada 168 berkas. OpenAPI diregenerasi: 100 path.
+
+Belum dijalankan pada fase ini: build Android, uji FCM dengan kredensial nyata, uji bucket S3 nyata, dan uji beban sosial.
+
+## 13. Bukti Fase 5 (dijalankan 24 November 2026)
+
+Perintah: `cd backend && npm test` (build TypeScript + seluruh `dist/test`).
+
+| Berkas | Cakupan | Hasil |
+|---|---|---|
+| `api.test.ts` | baseline auth, kendaraan, rute, trip, GPS noise | lulus |
+| `phase2.test.ts` | convoy realtime dan kapasitas | lulus |
+| `phase4.test.ts` | tujuh migrasi berurutan + tabel baru | lulus |
+| `phase4.social.test.ts` | audience, feed, komentar, album, moderasi | lulus |
+| `phase4.replay.test.ts` | upload, signed URL, replay, poster, poin, notifikasi, deletion | lulus |
+| `phase5.test.ts` | verifikasi billing palsu, replay token, notifikasi idempoten, batas kendaraan, RBAC/MFA/step-up, redeem idempoten, audit, export/deletion, kill switch | lulus |
+
+Hasil: **29 test lulus, 0 gagal, exit 0**. `node tools/junk-check.mjs` melaporkan 0 baris mencurigakan pada 200 berkas. OpenAPI diregenerasi: **134 path**. `cd admin && npm run build` sukses dengan Next.js 16.4.6.
+
+Tidak dijalankan pada fase ini:
+
+- verifikasi Google Play nyata, RTDN Pub/Sub, dan service account;
+- PostgreSQL/Redis/storage produksi dan uji backup/restore;
+- load test staging (`backend/tools/load-test.mjs` tersedia, belum dieksekusi);
+- klik-through browser admin, uji dua peran end-to-end, dan audit aksesibilitas;
+- build Android, signing, crash monitoring, dan staged rollout.
+
+## 14. Bukti API komunitas (dijalankan 24 November 2026)
+
+Perintah: `cd backend && npm test` (build TypeScript + seluruh `dist/test`).
+
+| Berkas | Cakupan | Hasil |
+|---|---|---|
+| `community.test.ts` | create komunitas + seed permission, join privat menjadi request, approve/decline, daftar anggota, perubahan role dengan permission, audit, post audience komunitas, album komunitas + media, join publik langsung | lulus |
+
+Hasil: **36 test lulus, 0 gagal, exit 0**. `node tools/junk-check.mjs` melaporkan 0 baris mencurigakan pada 205 berkas. OpenAPI diregenerasi: **151 path**.

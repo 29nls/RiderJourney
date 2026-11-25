@@ -8,13 +8,33 @@ Fase 0 mengaudit repository, membaca seluruh `PRD_RiderJourney.md` (903 baris), 
 
 Temuan utama: repository **bukan** aplikasi RiderJourney. Isinya toolkit `@mindmux/brain-md` v0.3.0 (Node CLI, skill brain, dokumentasi toolkit). Tidak ada kode Android, backend, admin, atau infrastruktur. Karena itu tidak ada implementasi lama yang dipertahankan atau dihapus. Fase 0 tidak menulis kode aplikasi; alasan dan konsekuensinya ada di `DECISIONS.md` D-011.
 
+Klasifikasi repository: **bukan kosong, bukan starter project aplikasi, dan bukan prototype produk**. Ini toolkit lintas proyek. Bukti: entry point `bin/brain.mjs` (81 baris) dan `bin/lib/installer.mjs`; modul skill di `skills/` (9 direktori, termasuk `brain-page` dan lima `antislop-*`); data brain toolkit di `brain/` (7 halaman root + `pages/`); `package.json` hanya mendefinisikan `bin` dan `scripts.test`, tanpa `dependencies`/`devDependencies`; tidak ada `tsconfig`, Gradle, Docker, database, migration, atau CI proyek. `cybersec-skills/` adalah materi referensi 818 skill dengan workflow GitHub miliknya sendiri, bukan pipeline proyek ini.
+
+Karena repository tidak kosong dan tidak berisi aplikasi, instruksi "jika repository kosong buat skeleton" tidak berlaku. Skeleton aplikasi tanpa vertical slice yang dapat diuji akan melanggar aturan prompt bagian 8 butir 5; Fase 1 membuka dengan walking skeleton yang benar-benar build dan test.
+
+### 1.1 Audit repository
+
+| Aspek | Temuan | Bukti |
+|---|---|---|
+| Bahasa | JavaScript ESM (Node >= 18) untuk CLI toolkit; Markdown untuk dokumen; tidak ada Kotlin/TypeScript aplikasi | `package.json` (`"type": "module"`, `engines.node`), `bin/brain.mjs` |
+| Framework | Tidak ada framework aplikasi; CLI Node tanpa dependencies | `package.json` tidak memuat `dependencies`/`devDependencies` |
+| Modul | `bin/brain.mjs`, `bin/lib/installer.mjs`, 9 bundle di `skills/`, data toolkit di `brain/` | struktur direktori |
+| Entry point | `bin.brain` → `bin/brain.mjs`; perintah proyek didelegasikan ke `skills/brain-page` | `package.json` (`bin`), `bin/brain.mjs` baris 1–18 |
+| Dependency | 0 dependency runtime dan 0 devDependency | `package.json` |
+| Build config | Tidak ada `tsconfig`, Gradle, Docker Compose, atau bundler | glob `tsconfig*.json`, `build.gradle*`, `docker-compose*` → 0 hasil |
+| Environment | Tidak ada `.env`, `.env.example`, atau konfigurasi aplikasi; `.freebuff/` hanya konfigurasi tool | daftar root dan glob `.env*` |
+| Database/migration | Tidak ada database, skema, atau migration | tidak ada `prisma/`, `migrations/`, SQL |
+| Test | `npm test` menjalankan `node --test`; 0 test | keluaran bagian 7 |
+| CI | Tidak ada pipeline proyek; workflow `.github` hanya di `cybersec-skills/` (materi referensi) | glob `**/.github/**` |
+| Git | Bukan repository git; tidak ada commit, branch, atau status | `git rev-parse --is-inside-work-tree` gagal |
+
 Fase 0 berhenti di sini sesuai instruksi. Fase 1 belum dimulai.
 
 ## 2. Fitur yang selesai dan belum selesai
 
 | Status | Isi |
 |---|---|
-| Selesai | Audit repository; pembacaan PRD penuh; pemetaan aktor, kapabilitas, prioritas, dan fase; arsitektur modular monolith; skema data; kontrak API dan realtime; threat model; matriks izin; rencana test; roadmap dan slice Fase 1; log keputusan dan konflik |
+| Selesai | Audit repository; pembacaan PRD penuh; pemetaan aktor, kapabilitas, prioritas, dan fase; matriks 67 requirement ber-ID; arsitektur modular monolith; sequence flow auth/lokasi/trip/konvoi; skema data dan klasifikasi; kontrak API dan realtime; threat model; matriks izin; rencana test; roadmap dan slice Fase 1; log keputusan dan konflik |
 | Belum selesai | Seluruh fitur produk (belum ada kode); OpenAPI formal; pemilihan provider peta; brand/domain/package final; kebijakan legal; CI/CD nyata; environment dev/staging/prod |
 | Tidak dikerjakan (sesuai instruksi) | Fase 1 dan seterusnya |
 
@@ -34,7 +54,8 @@ Tidak ada fitur produk yang dapat diklaim selesai. Yang ada adalah rancangan yan
 
 | File | Isi |
 |---|---|
-| `docs/DECISIONS.md` | Audit, keputusan D-001…D-023, konflik, keputusan terbuka |
+| `docs/DECISIONS.md` | Audit, keputusan D-001…D-024, konflik, keputusan terbuka, biaya/dependency/lisensi/risiko operasional |
+| `docs/REQUIREMENTS_MATRIX.md` | 67 requirement ber-ID + requirement tanpa ID, dependensi, status, fase, acceptance criteria |
 | `docs/SYSTEM_OVERVIEW.md` | Aktor, konteks, peta kapabilitas/fase, lingkungan, struktur repo |
 | `docs/ARCHITECTURE.md` | Modul backend, pipeline, adapter, Redis, Android, worker, deployment, failure modes |
 | `docs/DATA_MODEL.md` | Tabel, kolom, indeks, relasi, retensi, aturan integritas |
@@ -91,8 +112,12 @@ Tidak ada nilai, kredensial, atau contoh secret yang valid di repository. `.env.
 | `docker --version` | tidak ditemukan |
 | `psql --version` | tidak ditemukan |
 | `python --version` | 3.15.2 |
+| `npm run` | Hanya script `test`; tidak ada `lint`, `typecheck`, atau `build` |
+| `npm test` | `node --test`: tests 0, pass 0, fail 0, exit 0 — tidak ada test aplikasi yang berjalan |
+| Pemeriksaan entry point | `bin/brain.mjs`, `bin/lib/installer.mjs`, `skills/` 9 direktori, `brain/` 7 halaman toolkit |
+| Pencarian CI | Tidak ada workflow proyek; workflow `.github` hanya milik `cybersec-skills/` |
 | Pencarian `docs/**/*` | 0 file sebelum fase ini |
-| Audit dokumen Fase 0 | lihat bagian 9; semua file ada dan lolos pemeriksaan teks |
+| Audit dokumen Fase 0 | 12 file ada; 0 rujukan PRD tidak valid; 0 link `.md` menggantung; 0 penanda pekerjaan tertunda; 0 pola secret; 67/67 requirement terpetakan |
 
 Tidak ada `lint`, `typecheck`, `test`, atau `build` yang dijalankan karena tidak ada kode aplikasi. Tidak ada hasil test yang diklaim.
 
@@ -110,6 +135,7 @@ Tidak ada `lint`, `typecheck`, `test`, atau `build` yang dijalankan karena tidak
 | R-08 | Angka kapasitas 3/20/30 berasal dari indikasi APK | Salah dibaca sebagai spesifikasi resmi | Diperlakukan sebagai konfigurasi, bukan harga (PRD 5.5, 19.2) |
 | R-09 | Repository ini adalah toolkit brain.md | Kebingungan struktur dengan produk | Semua kode produk akan berada di `android/`, `backend/`, `admin/`; toolkit tidak diubah |
 | R-10 | OpenAPI belum ada | Kontrak belum dapat divalidasi mesin | Dihasilkan dari DTO di Slice 1A (D-023) |
+| R-11 | Toolkit hanya punya 0 test | `npm test` lulus tetapi tidak membuktikan perilaku produk | Test produk dibuat sejak Slice 1A dan dijalankan di CI |
 
 ## 9. Checklist acceptance
 
@@ -147,6 +173,9 @@ Tidak ada `lint`, `typecheck`, `test`, atau `build` yang dijalankan karena tidak
 | Rujukan requirement memakai ID yang ada di PRD | PASS | Diperiksa otomatis terhadap PRD |
 | Tidak ada klaim test yang tidak dijalankan | PASS | Bagian 7 dan 9 menyatakan tidak ada test |
 | Tidak ada secret | PASS | Tidak ada file `.env` atau kredensial |
+| Seluruh requirement ber-ID PRD 5 terpetakan | PASS | 67/67 ID pada `REQUIREMENTS_MATRIX.md`, masing-masing tepat satu fase |
+| Pemeriksaan awal build/lint dijalankan | PASS | `npm test` dijalankan: 0 test, exit 0; tidak ada script build/lint (bagian 7) |
+| Tidak ada layanan eksternal diklaim aktif | PASS | Tidak ada kredensial/instance; D-024 dan bagian 6 menyatakan belum tersedia |
 
 ## 10. Rekomendasi fase berikutnya
 

@@ -145,7 +145,55 @@ Semua payload divalidasi dengan skema yang sama di gateway dan REST; tidak ada j
 
 - Dua klien pada konvoi yang sama menerima posisi satu sama lain; koneksi ketiga tanpa keanggotaan ditolak.
 - Anggota keluar: key Redis hilang, event `member.left` diterima, dan koneksi ditutup.
-- Konvoi selesai: tidak ada event posisi setelah `status.changed(ended)`.
+- Konvoi selesai: tidak ada event posisi setelah `status.changed(completed)`.
 - Reconnect setelah putus 60 detik: `sinceSeq` memutar event yang hilang atau memicu snapshot.
 - Retry chat dengan `clientMessageId` sama tidak menggandakan baris.
 - Beban 30 anggota per konvoi sesuai PRD 11.1, diukur di lingkungan uji, bukan diklaim dari dokumen.
+
+## 12. Implementasi Phase 2 (fakta, 24 November 2026)
+
+Bagian 1–11 adalah rancangan. Bagian ini mencatat perilaku yang benar-benar diimplementasikan; bila berbeda, implementasi dan test menjadi acuan sampai kontrak direvisi.
+
+### 12.1 Cakupan yang aktif
+
+- Endpoint: `POST /v1/realtime/ticket` dan `WS /v1/realtime`.
+- Pesan klien yang diterima: `ping` dan `convoy.location.updated`. Chat, hazard, route message, dan voice **belum** ada di kanal ini.
+- Event server: `convoy.ready`, `convoy.snapshot`, `convoy.location.updated`, `convoy.location.stale`, `convoy.member.joined`, `convoy.member.left`, `convoy.member.updated` (termasuk handoff kepemimpinan), `convoy.status.changed`, `convoy.route.updated`, `pong`, dan `error`.
+- Event hanya disiarkan ke room `convoy:{id}`; identitas pengirim posisi selalu diambil dari tiket.
+
+### 12.2 Tiket dan handshake
+
+- Respons tiket: `{ticket, expiresIn, convoyId, protocol: "v1", wsPath: "/v1/realtime", capabilities}`.
+- TTL tiket dari `REALTIME_TICKET_TTL_SECONDS` (default 60 detik), disimpan sebagai hash SHA-256, diambil dan dihapus secara atomik sehingga sekali pakai.
+- Tiket hanya diterbitkan untuk membership `active` pada status `lobby/active/paused`.
+- Handshake gagal: `401` untuk tiket hilang/tidak valid/kedaluwarsa/sudah dipakai, `403` untuk origin CORS yang ditolak atau keanggotaan tidak aktif.
+- Query `sinceSeq` memutar event dari buffer; `convoy.snapshot` selalu dikirim sesudah replay dan memuat `replayTruncated` bila buffer tidak lagi mencakup `sinceSeq`.
+- Urutan saat koneksi dibuka: replay event (bila ada `sinceSeq`), lalu `convoy.snapshot`, lalu `convoy.ready`. `convoy.ready` bukan bagian urutan room (`seq: 0`) dan tidak dipakai klien untuk state.
+
+### 12.3 Lokasi dan pembatasan
+
+- Hanya konvoi `active`, anggota `active`, dan `sharing_consent = true` yang boleh mengirim posisi.
+- Laju: maksimum **1 pesan posisi per detik per koneksi** (bukan 1 per 2 detik seperti rancangan). Pelanggaran mengembalikan `error code: RATE_LIMITED`; server tidak menutup koneksi.
+- Validasi: lat −90…90, lng −180…180, `accuracyM` 0…1000, heading 0…360, speed 0…100, `recordedAt` maksimum 30 detik di masa depan dan 5 menit di masa lalu.
+- Posisi duplikat atau lebih lama dari posisi terakhir ditolak dengan `error code: OUT_OF_ORDER`. Deduplikasi juga dilakukan klien berdasarkan `id` event.
+- Key Redis: `convoy:{id}:pos:{userId}` TTL 300 detik (dapat dikonfigurasi), presence per anggota, dan buffer event `convoy:{id}:events` berupa **list Redis** (bukan Stream) berisi maksimum 2000 event dengan TTL 24 jam.
+- Pemeriksaan stale berjalan setiap `min(10 dtk, max(0,5 dtk, staleAfter/2))`; event stale dikirim sekali per `lastSeenAt` sampai posisi baru masuk.
+- Saat konvoi selesai/dibatalkan, keluar, atau dikeluarkan: key posisi/presence dan buffer event konvoi dihapus. Snapshot tidak lagi memuat posisi.
+
+### 12.4 Kode penutupan dan error
+
+- `4001`: tidak dipakai pada implementasi ini; handshake invalid ditolak HTTP 401/403 sebelum upgrade.
+- `4003 access_revoked`: keanggotaan hilang saat koneksi dibuka ulang atau akses dicabut.
+- `4008`: belum dipakai; rate limit dilaporkan sebagai `error` tanpa penutupan.
+- Error aplikasi memakai `{code, detail}` di dalam `data`; bukan `{code, message, retryable}`.
+
+### 12.5 Rate limit dan fanout
+
+- Tiket: 20 permintaan per menit per pengguna.
+- Posisi: 1 per detik per koneksi; tidak ada kuota koneksi bersamaan per pengguna pada implementasi ini.
+- Fanout menggunakan hub in-process. Redis menyimpan state, bukan pub/sub lintas replika. Menjalankan lebih dari satu instance API akan memecah fanout; itu **belum didukung** dan wajib diselesaikan sebelum produksi multi-replika.
+
+### 12.6 Verifikasi
+
+- `backend/src/test/phase2.test.ts` menguji isolasi room, penolakan nonanggota, stale, reconnect + replay, deduplikasi/urutan, single-use ticket, pencabutan akses, handoff, dan beban 30 anggota.
+- Load test memakai store memori dan satu proses Node (bukan Redis nyata). Angka aktual ada di `PHASE_2_REPORT.md`; itu bukan klaim kapasitas produksi.

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">RiderJourney</string>
+    <string name="tracking_channel_name">Sesi touring</string>
+    <string name="tracking_channel_description">Menampilkan status perekaman perjalanan saat layar mati.</string>
+</resources>

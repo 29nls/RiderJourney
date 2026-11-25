@@ -250,7 +250,77 @@ Retry memakai backoff eksponensial dengan batas; pekerjaan yang gagal permanen m
 | Billing verification gagal | Entitlement tidak berubah; status `pending` dan rekonsiliasi |
 | Leader disconnect | Co-leader mengambil alih sesuai BR-07; bila tidak ada, konvoi menunggu leader |
 
-## 13. Yang belum diputuskan
+## 13. Alur utama
+
+### 13.1 Autentikasi dan sesi
+
+```text
+Android                    Identity Provider              Backend
+  |-- login (SDK OIDC) --------->|                           |
+  |<-- ID token + refresh -------|                           |
+  |-- POST /v1/auth/session (Bearer) ----------------------->|
+  |                             |<-- JWKS, verifikasi iss/aud/exp --|
+  |                             |    upsert users(auth_uid=sub)    |
+  |<-- user + requiredConsents ------------------------------|
+  |-- POST /v1/me/consents ---------------------------------->|
+  |-- GET /v1/me -------------------------------------------->|
+```
+
+Refresh token ditangani SDK identitas di perangkat dan disimpan aman; backend tidak menerbitkan token sendiri dan tidak menerima `userId` dari body. Logout mencabut refresh token dan `device_tokens` perangkat tersebut.
+
+### 13.2 Lokasi live konvoi
+
+```text
+Android (FGS)              Backend                      Redis                  Anggota lain
+  |-- POST /v1/realtime/ticket -->| cek anggota/status    |                       |
+  |<-- ticket (60 s, sekali) -----|                       |                       |
+  |== wss handshake + ticket ==============================>|                       |
+  |-- convoy.location.updated --->| validasi consent      |                       |
+  |                              |-- HSET pos TTL 300s -->|                       |
+  |                              |-- siarkan ke room ------------------------------>|
+  |<-- convoy.location.updated (anggota lain) -------------------------------------|
+  |                              |-- job stale 10s ------>|                       |
+  |<-- convoy.location.stale -----------------------------|                       |
+  |-- leave / convoy end ------->| DEL pos + cabut room  |                       |
+```
+
+Tidak ada jalur penulisan posisi ke PostgreSQL. Bila Redis tidak siap, gateway menolak update dengan error yang dapat di-retry, bukan menyimpan diam-diam.
+
+### 13.3 Pencatatan trip
+
+```text
+Android (Room + FGS)                 Backend                     PostgreSQL
+  |-- POST /v1/trips ----------------->| cek BR-01               |
+  |<-- tripId + status ---------------|                         |
+  |-- titik lokal (Room)              |                         |
+  |-- POST /v1/trips/{id}/points ----->| validasi, filter, upsert |
+  |                                   |-- trip_points (partisi) ->|
+  |<-- accepted/duplicates/rejected --|                         |
+  |-- POST /v1/trips/{id}/finish ----->| hitung ulang jarak      |
+  |<-- ringkasan trip ----------------|-- trips + geometri ------>|
+```
+
+Titik disimpan lokal lebih dulu; kegagalan jaringan tidak menghapus data. Sesi yang tidak ditutup dipulihkan sebagai `recovered` dan dikonfirmasi pengguna (BR-15).
+
+### 13.4 Siklus konvoi
+
+```text
+Leader                     Backend                         Anggota
+  |-- POST /v1/convoys ------->| buat convoy + invite hash    |
+  |<-- convoy + kode sekali ---|                              |
+  |                           |<-- POST /v1/convoys/join ----| (kode, kapasitas, blokir)
+  |                           |--- convoy.member.joined ---->|
+  |-- POST /{id}/start ------>| cek kapasitas entitlement    |
+  |                           |--- convoy.status.changed --->|
+  |-- rute/chat/posisi ========|==============================|
+  |-- POST /{id}/pause ------->|--- status.changed ---------->|
+  |-- POST /{id}/end --------->| DEL posisi, cabut room       |
+  |                           |--- convoy.member.left ------>|
+```
+
+Status hanya berubah lewat transisi yang divalidasi; semua anggota menerima `version` yang sama. Leader yang terputus ditangani aturan handoff (BR-07).
+
+## 14. Yang belum diputuskan
 
 - Provider tile/routing/geocoding/cuaca dan biayanya (PRD 17 butir 3) — memblokir exit criteria Fase 0.
 - Identitas merek, domain, dan package name final (PRD 17 butir 1).
@@ -258,3 +328,14 @@ Retry memakai backoff eksponensial dengan batas; pekerjaan yang gagal permanen m
 - Kapasitas dan harga paket resmi (PRD 17 butir 4).
 
 Detail kontrak: `API_CONTRACT.md`, `REALTIME_EVENTS.md`, `DATA_MODEL.md`, `SECURITY_AND_PRIVACY.md`.
+
+## 15. Implementasi Phase 2 dan batas runtime
+
+- **Satu proses fanout.** `RealtimeHub` menyimpan koneksi di memori proses. Redis dipakai untuk tiket, posisi, presence, urutan, buffer event, dan rate limit, tetapi **bukan pub/sub**. Dua replika API akan memiliki fanout terpisah; deployment multi-replika belum didukung sampai pub/sub atau adaptor sticky ditambahkan.
+- **Fallback memori.** Tanpa `REDIS_URL`, development/test memakai `MemoryRealtimeStore` satu proses. Produksi mewajibkan `REDIS_URL`; fallback tidak boleh dipakai sebagai klaim ketahanan.
+- **Android.** Klien WebSocket menangani tiket baru, `sinceSeq`, deduplikasi `id`, backoff eksponensial, ping, dan close code akses. Berbagi lokasi konvoi berjalan selama proses aplikasi/ViewModel aktif; **belum** memakai foreground service khusus konvoi seperti tracking trip. Karena itu berbagi lokasi berhenti saat proses aplikasi dibunuh, dan perilaku ini belum diuji pada perangkat.
+- **Peta.** Marker anggota hanya dibuat dari snapshot/event server yang sudah difilter consent. Rute bersama diambil dari `GET /v1/routes/{id}` (pemilik atau anggota aktif konvoi) dan digambar sebagai LineString di atas style. Gaya peta tetap berasal dari konfigurasi; tanpa `RJ_MAP_STYLE_URL`, UI menampilkan state konfigurasi, bukan peta, rute, atau marker palsu.
+- **Provider.** Routing/geocoding produksi belum dikonfigurasi; preview rute tetap 503 eksplisit tanpa fallback palsu. Konvoi dapat menyimpan `routeId` yang sudah dimiliki leader/co-leader.
+- **Belum termasuk.** Chat, voice/PTT, hazard, billing, push notification konvoi, deep link undangan di Android, dan dashboard admin belum diimplementasikan pada Phase 2.
+
+Laporan bukti dan batasan: `PHASE_2_REPORT.md`.

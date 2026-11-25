@@ -1,6 +1,8 @@
 # API CONTRACT — RiderJourney v1
 
-Kontrak REST tingkat implementasi untuk Fase 1, memperluas tabel endpoint PRD 10.1. Ini rancangan baru, bukan endpoint aplikasi referensi. Perubahan yang merusak kompatibilitas menaikkan versi ke `/v2`; perubahan aditif dicatat di dokumen ini.
+Kontrak REST tingkat implementasi untuk Fase 1–2, memperluas tabel endpoint PRD 10.1. Ini rancangan baru, bukan endpoint aplikasi referensi. Perubahan yang merusak kompatibilitas menaikkan versi ke `/v2`; perubahan aditif dicatat di dokumen ini.
+
+> **Status implementasi (24 November 2026):** **`docs/openapi.json`** dihasilkan dari DTO NestJS dan memuat **151 path**. Implementasi mencakup auth, profil, kendaraan, places/routes, trip, konvoi/realtime, chat/hazard/media, voice backend, sosial/feed/album/replay/poster, komunitas, billing/redeem, admin, dan privacy. UI voice dan website komunitas belum ada. Bila dokumen ini berbeda dengan OpenAPI, OpenAPI menang untuk endpoint yang sudah ada.
 
 ## 1. Konvensi
 
@@ -126,7 +128,9 @@ Request: `{ "kind": "terms|privacy|location_disclosure|microphone_disclosure", "
 
 ### `GET /v1/me/export`
 
-Response 202: `{ "exportId": "...", "status": "queued" }`; status di `GET /v1/me/export/{id}`. Ekspor tidak memuat posisi live atau token.
+Response 202: `{ "exportId": "...", "status": "queued" }`.
+
+`GET /v1/me/export/{id}` mengembalikan `{ status, downloadUrl?, expiresAt? }`; `downloadUrl` hanya diberikan kepada pemilik dan berumur pendek. Ekspor tidak memuat posisi live atau token.
 
 ### `DELETE /v1/me` ✓
 
@@ -149,10 +153,11 @@ Response kendaraan **tidak** memuat plat kecuali `includePlate=true` untuk pemil
 
 | Method | Path | Keterangan |
 |---|---|---|
-| POST | `/v1/media/upload-intents` ✓ | `{purpose, mimeType, sizeBytes, checksumSha256, visibility}` → `{mediaId, uploadUrl, expiresAt}` |
-| POST | `/v1/media/{id}/complete` ✓ | Verifikasi metadata, MIME sniffing, antre moderasi |
+| POST | `/v1/media/uploads` ✓ | `{purpose, contentType, sizeBytes, clientMediaId, checksumSha256?}` → `{id, status, uploadUrl, method, requiredHeaders, expiresIn}`. `clientMediaId` membuat retry memakai baris dan key yang sama |
+| POST | `/v1/media/uploads/{id}/complete` ✓ | Multipart `sizeBytes`, `originalName?`, dan potongan awal file. Server memeriksa magic bytes dan ukuran yang dikirim klien; verifikasi object storage belum end-to-end |
 | GET | `/v1/media/{id}/url` | Signed GET berumur pendek; cek kepemilikan/visibilitas |
-| DELETE | `/v1/media/{id}` | Hapus objek dan metadata akses |
+| GET | `/v1/media/{id}/access` | URL bertanda tangan; saat ini mengembalikan metadata, bukan byte atau redirect ke storage |
+| DELETE | `/v1/media/{id}` | Belum diimplementasikan di controller; penghapusan objek storage belum end-to-end |
 
 MIME diizinkan: `image/jpeg`, `image/png`, `image/webp`, `video/mp4` (Fase 3 untuk video). Kuota awal D-018.
 
@@ -203,9 +208,13 @@ Response 200:
 
 Kegagalan provider: 503 `PROVIDER_UNAVAILABLE`, tanpa ETA palsu. `disclaimer` wajib ada (PRD 5.3).
 
-### `POST /v1/routes/{id}/recalculate`
+### `GET /v1/routes/{id}` ✓
 
-Memakai waypoint tersimpan; menghasilkan route baru dengan `id` baru. Hanya pemilik atau leader konvoi.
+Membaca rute tersimpan untuk pemiliknya atau anggota aktif konvoi yang memakai rute tersebut. Respons memuat `id, ownerId, name, distanceM, durationS, provider, waypoints, geometry` dengan `geometry.type = "LineString"` dan `coordinates` berurutan `[lng, lat]`. Anggota yang tidak berhak mendapat 404 `ROUTE_NOT_FOUND`.
+
+### `POST /v1/routes/{id}/recalculate` ✓
+
+Memakai origin, destination, dan waypoint tersimpan; memanggil ulang provider dan menghasilkan route baru dengan `id` baru tanpa mengubah route lama (konvoi tetap memegang versi lama). Hanya pemilik atau leader konvoi aktif; pengguna lain mendapat 404 `ROUTE_NOT_FOUND`. Bila provider gagal atau tidak menemukan rute, respons 503 `PROVIDER_UNAVAILABLE` — tidak ada rute atau ETA buatan. Respons: `{id, distanceM, durationS, geometry, provider, disclaimer}`.
 
 ## 7. Perjalanan
 
@@ -234,32 +243,52 @@ Contoh batch titik:
 
 Response: `{ "accepted": 1, "duplicates": 0, "rejected": [] }`. Titik dengan `seq` yang sudah ada dianggap duplikat, bukan error.
 
+Ringkasan trip (`GET /v1/trips`, `/active`, `/{id}`, dan respons start/pause/resume/finish) memuat `distanceM`, `durationS`, `movingS`, `avgSpeedKph`, `maxSpeedKph`, `startLocation {lat,lng}`, `endLocation {lat,lng}`, `pointCount`, dan `dataQuality`. `movingS` hanya menjumlahkan jarak waktu antar titik `ok` yang berdekatan (≤60 detik); `maxSpeedKph` berasal dari `speedMps` titik `ok`; `startLocation`/`endLocation` adalah titik `ok` pertama dan terakhir. Semua nilai `null` bila belum ada data yang layak — tidak ada angka pengganti.
+
 Transisi tidak valid → 409 `INVALID_TRIP_STATE`. Sesi `recovered` dibuat saat klien melaporkan sesi lokal yang belum ditutup.
 
-## 8. Konvoi
+## 8. Konvoi (diimplementasikan Fase 2)
 
 | Method | Path | Keterangan |
 |---|---|---|
-| POST | `/v1/convoys` ✓ | `{name, meetingPoint, destination, waypoints?, scheduledAt?, capacity?, routeId?}` |
-| POST | `/v1/convoys/join` ✓ | `{code}`; validasi kapasitas, status, expiry, blokir |
-| GET | `/v1/convoys/{id}` | Anggota aktif; memuat `version`, `status`, `role` |
-| GET | `/v1/convoys/{id}/members` | Anggota aktif; pagination |
-| PATCH | `/v1/convoys/{id}/members/{userId}` | Leader: `{role?, status?}`; audit |
-| POST | `/v1/convoys/{id}/leave` ✓ | Menghapus posisi live dan akses room |
-| POST | `/v1/convoys/{id}/start` ✓ | `lobby → active`; `If-Match` |
-| POST | `/v1/convoys/{id}/pause` ✓ | Leader/co-leader |
-| POST | `/v1/convoys/{id}/resume` ✓ | Leader/co-leader |
-| POST | `/v1/convoys/{id}/end` ✓ | `active/paused → ended`; lokasi live dihentikan |
-| PATCH | `/v1/convoys/{id}/route` ✓ | `{routeId}`; hanya leader/co-leader; menaikkan `version` |
-| POST | `/v1/convoys/{id}/invites` ✓ | `{expiresInSeconds?, maxUses?}` → kode mentah **satu kali** |
-| DELETE | `/v1/convoys/{id}/invites/{inviteId}` | Revoke |
-| GET | `/v1/convoys/{id}/positions` | Snapshot posisi terakhir untuk anggota aktif |
+| GET | `/v1/convoys` | Konvoi yang pernah diikuti pemanggil, terbaru lebih dulu |
+| GET | `/v1/convoys/active` | Konvoi `lobby/active/paused` pemanggil atau `null` |
+| POST | `/v1/convoys` ✓ | `{name, meetingPoint, destination, waypoints?, scheduledAt?, capacity?}`; leader otomatis, status `lobby` |
+| GET | `/v1/convoys/{id}` | Detail untuk anggota; memuat `myStatus`, `myRole`, `version` |
+| GET | `/v1/convoys/{id}/members` | Anggota + permintaan join; `displayName`, `role`, `status`, `sharingConsent` |
+| POST | `/v1/convoys/join` ✓ | `{code}`; menghasilkan membership `requested`, bukan langsung aktif |
+| POST | `/v1/convoys/{id}/members/{userId}/approve` | Leader/co-leader; `active`; `If-Match` opsional |
+| POST | `/v1/convoys/{id}/members/{userId}/reject` | Leader/co-leader; `{reason?}`; `requested → left` |
+| DELETE | `/v1/convoys/{id}/members/{userId}` | Leader/co-leader mengeluarkan anggota; tidak dapat mengeluarkan leader |
+| PATCH | `/v1/convoys/{id}/members/{userId}` | `{role: "co_leader"|"member"}`; hanya leader |
+| POST | `/v1/convoys/{id}/transfer` | `{userId}`; leader memindahkan kepemimpinan |
+| POST | `/v1/convoys/{id}/leave` ✓ | `requested` dapat membatalkan; `active` keluar; leader yang keluar otomatis mempromosikan co-leader/anggota aktif terlama, atau membatalkan konvoi bila sendirian |
+| PATCH | `/v1/convoys/{id}/sharing` | `{sharingConsent}`; consent per anggota |
+| POST | `/v1/convoys/{id}/invites` ✓ | `{expiresInSeconds?, maxUses?}` → kode mentah **satu kali**, `code`/`link` |
+| GET | `/v1/convoys/{id}/invites` | Metadata invite; hash dan kode mentah tidak dikembalikan |
+| DELETE | `/v1/convoys/{id}/invites/{inviteId}` | Revoke; idempoten untuk invite yang sudah dicabut |
+| PATCH | `/v1/convoys/{id}/route` | `{routeId}`; hanya leader/co-leader; `version` dan `routeVersion` naik |
+| POST | `/v1/convoys/{id}/publish` | `draft → lobby` |
+| POST | `/v1/convoys/{id}/start` | `lobby → active`; cek kapasitas aktif |
+| POST | `/v1/convoys/{id}/pause` | `active → paused` |
+| POST | `/v1/convoys/{id}/resume` | `paused → active` |
+| POST | `/v1/convoys/{id}/complete` | `active/paused → completed`; posisi live dihapus |
+| POST | `/v1/convoys/{id}/end` | Alias `complete` yang dipertahankan |
+| POST | `/v1/convoys/{id}/cancel` | `draft/lobby/active/paused → cancelled`; posisi live dihapus |
+| GET | `/v1/convoys/{id}/positions` | Snapshot posisi anggota yang consent; `stale`, `ageSeconds` |
 
-Aturan:
+Status: `draft → lobby → active ⇄ paused → completed`, dan `cancelled` dari status nonterminal. `completed`/`cancelled` terminal.
 
-- Kapasitas dicek ulang saat join dan saat start; nilai berasal dari entitlement server (CNV-08, BR-10).
-- Anggota yang tidak memberi `sharingConsent` tetap melihat peta sesuai kebijakan, tetapi statusnya `not_sharing`.
-- `GET /positions` mengembalikan `lastSeenAt` dan `stale: true|false`; bukan posisi lama tanpa label (CNV-04, BR-06).
+Aturan implementasi:
+
+- Kode 10 karakter Crockford Base32; hanya HMAC-SHA256 dengan `INVITE_HMAC_PEPPER` yang disimpan. Default kedaluwarsa 24 jam, `maxUses` default 20.
+- Join selalu `requested`. Kapasitas efektif = pemilik ditambah anggota `active` ditambah permintaan `requested`; nilai default 3, maksimum 30. Satu pengguna hanya boleh punya satu membership `active/requested`.
+- Kapasitas dan entitlement dibaca di server dari `user_entitlements`; `capacity` klien di-clamp ke `[2, max]` dan ditolak bila di atas maksimum. Tidak ada paket berbayar pada fase ini.
+- `POST /leave` untuk `requested` mengubah status menjadi `left`; untuk `active` menghapus posisi/presence dan mencabut room. Bila leader keluar dan masih ada anggota aktif, server mempromosikan co-leader/anggota terlama, memperbarui `convoys.leader_id`, dan menyiarkan perubahan peran; bila tidak ada anggota aktif, konvoi menjadi `cancelled`.
+- Perubahan anggota, peran, rute, status, invite, dan handoff dicatat di `convoy_audit_logs`.
+- `If-Match` divalidasi bila dikirim; konflik menghasilkan 409 `VERSION_MISMATCH`.
+- `GET /positions` mengembalikan `lastSeenAt`, `stale`, dan `ageSeconds`; posisi anggota tanpa consent tidak pernah dikembalikan (CNV-04, BR-06).
+- Bila semua socket leader terputus, server segera memindahkan kepemimpinan ke co-leader/anggota aktif terlama dan menyiarkan `convoy.member.updated`; perilaku ini spesifik Phase 2 (D-032).
 
 ## 9. Chat
 
@@ -294,7 +323,7 @@ Rate limit pembuatan laporan 5 per 10 menit per pengguna. Laporan duplikat berde
 
 ## 12. Realtime
 
-`POST /v1/realtime/ticket` ✓ — `{ "convoyId": "uuid" }` → `{ "ticket": "...", "expiresInSeconds": 60 }`.
+`POST /v1/realtime/ticket` ✓ — `{ "convoyId": "uuid" }` → `{ "ticket": "...", "expiresIn": 60, "convoyId": "...", "protocol": "v1", "wsPath": "/v1/realtime", "capabilities": {"subscribe": true, "publishLocation": true} }`.
 
 Server memeriksa keanggotaan aktif dan status konvoi sebelum menerbitkan tiket. Detail protokol ada di `REALTIME_EVENTS.md`.
 
@@ -349,6 +378,21 @@ Akses moderator ke pesan dan trip hanya melalui alur laporan yang tercatat, buka
 
 Angka ini default implementasi, dapat diubah lewat konfigurasi; bukan komitmen SLA.
 
-## 17. Yang belum ada di kontrak ini
+## 17. Komunitas
 
-Endpoint komunitas, feed, voice, poin, leaderboard, redeem, dan website komunitas menyusul pada fase 2–4 sesuai PRD 15. Endpoint tersebut tidak dibuat sekarang agar tidak ada kontrak yang tidak diimplementasikan.
+| Method | Path | Keterangan |
+|---|---|---|
+| POST | `/v1/communities` | `{slug, name, description?, region?, visibility?}`; owner otomatis aktif dan default permission per peran di-seed |
+| GET | `/v1/communities/{id}` | Detail publik + status/role membership pemanggil |
+| POST | `/v1/communities/{id}/join` | Publik langsung `active`; privat menjadi `requested`; retry idempoten |
+| GET | `/v1/communities/{id}/members` | Anggota aktif; khusus anggota aktif |
+| GET | `/v1/communities/{id}/join-requests` | Antrean `requested`; butuh `member.approve` |
+| POST | `/v1/communities/{id}/join-requests/{userId}/approve` | Menyetujui permintaan; butuh `member.approve` |
+| POST | `/v1/communities/{id}/join-requests/{userId}/decline` | Menolak permintaan; status menjadi `left` dan dapat meminta ulang |
+| PATCH | `/v1/communities/{id}/members/{userId}/role` | `{role: admin\|moderator\|member}`; butuh `member.set_role`; owner tidak dapat diubah |
+
+Default permission: `member` mendapat `post.create` dan `album.create`; `moderator` mendapat keduanya plus moderasi konten, approve/remove anggota, dan event; `admin` mendapat seluruh permission komunitas. Owner selalu memiliki semua permission. Setiap create, join/request, approve/decline, dan perubahan role ditulis ke `community_audit_logs`. Endpoint album komunitas tetap `GET /v1/communities/{communityId}/albums` dan `POST /v1/albums` dengan `visibility=community`.
+
+## 18. Yang belum ada di kontrak ini
+
+Voice, poin, leaderboard, redeem, website komunitas, dan endpoint komunitas lain di luar alur minimal di atas belum ada di kontrak ini.

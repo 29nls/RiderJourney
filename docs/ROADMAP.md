@@ -95,7 +95,7 @@ Fase 1 dipecah menjadi tujuh slice yang masing-masing harus dapat dijalankan dan
 - LiveKit/PTT dan voice room, prioritas audio dengan navigasi (COM-03…COM-06).
 - Komunitas/klub, role, agenda, channel, artikel, album (CMT-01…CMT-06).
 - Feed, follow, komentar, reaksi, blokir, notifikasi sosial (SOC-01…SOC-06).
-- Co-leader dan handoff (CNV-07), tema peta, navigasi suara, tempat favorit lanjutan.
+- Co-leader dan handoff (CNV-07), kendaraan tambahan dan kendaraan utama (VEH-02), tema peta, navigasi suara, tempat favorit lanjutan.
 - Moderation tools untuk konten komunitas.
 
 **Exit criteria PRD 15:** pengujian audio dan moderasi lulus; permission dan kebijakan lokasi jelas.
@@ -130,7 +130,21 @@ Kapasitas 3/20/30 dan harga belum final (PRD 5.5, 17 butir 4); implementasi mema
 | Firebase/OIDC, FCM, storage, LiveKit | Slice 1A/1E/2 | Belum disiapkan |
 | Perangkat uji dan jaringan | Slice 1D/1G | Belum disiapkan |
 
-## 8. Definition of Done per slice
+## 8. Acceptance gate per fase
+
+Gate ini melengkapi exit criteria PRD 15; sebuah fase tidak ditutup hanya karena fitur tampil di UI.
+
+| Fase | Gate yang harus lulus | Bukti yang disimpan |
+|---|---|---|
+| 0 | Dokumen lengkap dan konsisten; seluruh requirement ber-ID terpetakan; tidak ada secret; pemeriksaan awal dijalankan | Laporan Fase 0, audit dokumen, hasil `npm test` kondisi awal |
+| 1 | Acceptance gate MVP PRD 14.3 (10 butir); otorisasi dua akun; GPS/offline/FGS; WebSocket 30 anggota; build Android + backend + admin lulus | Test log, laporan slice, hasil load test, APK internal |
+| 2 | Audio/PTT lulus uji jaringan buruk; moderasi komunitas; role dan channel teruji; tidak ada kebocoran lokasi | Test audio, security test, laporan moderasi |
+| 3 | Pipeline media stabil; biaya storage terukur; replay/poster berjalan; kontrol privasi media | Laporan biaya, test media, sample poster |
+| 4 | Audit billing/fraud; hak aset; unit economics; entitlement server-side teruji | Rekonsiliasi billing, audit aset, laporan biaya |
+
+Status gate Fase 0: dokumen dan pemetaan PASS; persetujuan pemilik produk dan provider peta BLOCKED (lihat `PHASE_REPORTS/PHASE_0_REPORT.md`).
+
+## 9. Definition of Done per slice
 
 Slice hanya ditutup bila:
 
@@ -142,6 +156,6 @@ Slice hanya ditutup bila:
 - Dokumentasi kontrak diperbarui bila berubah.
 - Risiko dan known issue dicatat di laporan fase.
 
-## 9. Yang tidak dijadwalkan
+## 10. Yang tidak dijadwalkan
 
 Fitur di luar PRD 2.1, integrasi darurat resmi tanpa perjanjian, navigasi offline penuh, musik komersial tanpa lisensi, video call, dan integrasi ECU/OBD tidak masuk roadmap ini (PRD 2.2).

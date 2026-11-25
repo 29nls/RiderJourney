@@ -45,6 +45,8 @@ Dokumen ini adalah threat model dan baseline keamanan Fase 0. Mewujudkan PRD 11.
 | T-12 | Akses fisik perangkat | Perangkat tidak terkunci | Kunci biometrik perangkat, sesi dapat dicabut, tidak menyimpan sandi | Test logout dan revoke |
 | T-13 | Secret bocor di repo | Commit `.env` atau kunci | `.gitignore`, `.env.example` tanpa nilai, secret scanning, review | Scan repo sebelum rilis |
 | T-14 | DoS endpoint mahal | Spam preview rute/upload | Rate limit per pengguna, timeout provider, kuota | Load test terbatas |
+| T-15 | Spam dan harassment | Pesan massal, mention, posting/komentar berulang, undangan komunitas | Rate limit per aksi, batas mention, mute/blokir, moderasi, deteksi pola | Uji dua akun: blokir, mute, laporan, rate limit |
+| T-16 | Retensi berlebihan / penghapusan tidak tuntas | Data lokasi, pesan, media, akun dihapus tetap tersimpan | Retensi terjadwal, partisi trip_points, hard delete media, anonimisasi, audit permintaan | Uji hapus akun dan media; periksa backup dan turunan |
 
 ## 4. Klasifikasi data
 
@@ -158,5 +160,53 @@ Rate limit per pengguna dan per IP untuk login, join, chat, upload, redeem, lapo
 | Upload MIME palsu ditolak | T-07 | 1 |
 | Token tidak muncul di log/crash report | T-06, T-08 | 1 |
 | Replay token pembelian tidak menambah entitlement | T-11 | 4 |
+| Blokir dan mute mencegah pesan/mention | T-15 | 2 |
+| Hapus akun memproses data turunan dan media | T-16 | 1 |
+| Backup tidak menghidupkan kembali data yang dihapus | T-16 | 1 (uji restore) |
 
 Tidak ada hasil uji yang diklaim pada Fase 0 karena belum ada kode.
+
+## 16. Fase 4 — sosial, album, replay, poster, dan engagement
+
+Kontrol yang sekarang diimplementasikan dan diuji:
+
+- **Satu aturan visibilitas** (`backend/src/social/audience.sql.ts`) dipakai oleh feed, detail post, album, dan akses media. Urutannya: penulis selalu boleh; `private` hanya penulis; `followers` butuh follow yang diterima; `community` butuh keanggotaan aktif; `public` tetap menyembunyikan konten yang dihapus/dimoderasi.
+- **Blokir bersifat dua arah** untuk feed, pencarian post langsung, komentar, follow, dan media. **Mute hanya menyaring feed** dan tidak menghalangi akses langsung.
+- **Signed URL media** memakai HMAC-SHA256 yang terikat pada satu `mediaId` dan satu `expires`; tanda tangan tidak valid atau kedaluwarsa ditolak 401. Penerbitan URL memakai pemeriksaan akses yang sama dengan feed/album/trip.
+- **Unggahan** memakai intent + completion. Completion memeriksa magic bytes (JPEG/PNG/WebP/MP4/WebM), ukuran yang dijanjikan, dan batas per purpose; video memakai batas terpisah dan tidak dapat menyamar sebagai foto.
+- **Idempotensi** dijaga oleh kunci klien dan constraint database: `client_media_id`, `client_post_id`, `client_id` komentar/reaksi, `client_report_id`, `client_album_id`, `client_poster_id`, dan `UNIQUE (user_id, reason, reference_id)` pada point ledger.
+- **Moderasi album**: media album komunitas masuk `pending`; hanya pemilik album atau moderator komunitas yang dapat menyetujui/menolak; media `rejected` tidak tampil untuk pengguna lain. Kuota dihitung di dalam transaksi dengan `SELECT ... FOR UPDATE`.
+- **Penghapusan data sosial** menghapus post, album, media (metadata), trip photo, notifikasi, perangkat push, poin, dan badge; object key dikembalikan agar lifecycle storage menghapus byte-nya. Akun pengguna tetap ada.
+- **Push**: token FCM disimpan terenkripsi dengan `CONTACT_ENCRYPTION_KEY` (fallback `PLATE_ENCRYPTION_KEY`) dan hanya hash yang unik; tanpa `FCM_SERVER_KEY` pengiriman dilaporkan nonaktif, bukan gagal.
+- **Engagement aman**: alasan poin dibatasi oleh CHECK database ke checklist keselamatan, RSVP kegiatan, laporan bahaya, komentar baik, dan badge. Kecepatan, jarak, atau penggunaan ponsel saat berkendara tidak dapat direpresentasikan. Leaderboard hanya menjumlahkan ledger akun yang opt-in.
+
+Batasan yang masih terbuka (tidak diklaim selesai):
+
+- Permukaan API komunitas minimal sekarang tersedia: create, join/request, approve/decline, daftar anggota, dan perubahan role. Semua mutasi memeriksa role/permission di server, menolak perubahan owner, dan menulis `community_audit_logs`. Test `community.test.ts` membuktikan alur create → request → approve → role → post audience komunitas → album komunitas tanpa baris database manual.
+- Signed GET mengembalikan metadata + grant, bukan aliran byte dari bucket. Adapter storage produksi harus menerjemahkan grant ini menjadi SigV4 asli atau proxy Worker; kredensial storage tidak pernah dikirim ke klien.
+- FCM belum diuji dengan kredensial nyata; hanya jalur in-app, preferensi, dan registrasi perangkat yang diuji.
+- Story/status sengaja belum dibuat karena prioritas produk dan kebijakan retensi belum disetujui (PRD butir 6).
+
+## 17. Fase 5 — langganan, admin, dan operasi
+
+Kontrol yang sekarang diimplementasikan dan diuji:
+
+- **Dua kill switch** untuk fitur berbayar: environment `BILLING_ENABLED`/`PAID_FEATURES_ENABLED` dan `admin_config.features`. Pembelian, grant manual, dan entitlement premium hanya aktif bila keduanya true. Default semua false.
+- **Verifikasi provider**: backend memanggil Android Publisher `purchases.subscriptionsv2`; state klien tidak dipercaya. Token di-hash untuk lookup dan disimpan terenkripsi hanya untuk rekonsiliasi. Token yang sudah terikat akun lain ditolak `PURCHASE_ALREADY_BOUND`.
+- **Status langganan** disimpan server-side dengan expiry, grace, auto-renew, dan status provider. `paused`/`on_hold` tidak memberi entitlement. Kill switch mengembalikan akun ke paket free tanpa menghapus riwayat.
+- **Admin RBAC**: support, moderator, admin, superadmin. Izin diperiksa di service. MFA TOTP wajib untuk step-up; token step-up ber-audience admin, berumur pendek, dan terikat pada user.
+- **Audit**: setiap tindakan sensitif menyimpan aktor, aksi, target, alasan wajib, nilai before/after, dan request id. Audit tidak dihapus oleh UI.
+- **Redeem**: kode HMAC dengan pepper, plaintext hanya sekali, kuota/expiry/status dikunci dalam transaksi, satu kode sekali per akun, idempotency key unik. Ledger poin immutable.
+- **Privacy**: export memakai job dan masa berlaku; penghapusan memakai konfirmasi, grace period, pencabutan refresh token, penghapusan konten, dan penyamaran PII. Catatan billing/audit yang wajib disimpan dipertahankan secara pseudonim.
+- **Rate limit**: 120 request/menit global; login/register 10/menit; reset 5/menit; MFA 5-10/menit; redeem 5/menit; billing verify 10/menit; restore 5/menit.
+- **Redaksi log**: filter error menyamarkan token, secret, password, authorization, dan signature. Log request tidak memuat body, query, atau koordinat.
+- **Admin web** memakai cookie `HttpOnly`, `SameSite=Lax`, `Secure` di produksi, proxy server-side, refresh rotation, dan CSP. Step-up token hanya di `sessionStorage` tab, bukan cookie permanen.
+
+Batasan keamanan yang masih terbuka:
+
+- RTDN memakai shared secret header; Pub/Sub memerlukan gateway OIDC yang belum dibuat. Jangan aktifkan RTDN sebelum gateway ada.
+- CSP admin masih mengizinkan `'unsafe-inline'` untuk script; ini perlu nonce atau edge proxy.
+- Rate limit login admin dilihat backend sebagai IP server Next.js, bukan IP operator. Edge rate limit per operator belum ada.
+- Belum ada uji penetrasi, review dependency, atau alerting produksi.
+- Secret manager, rotasi key, dan uji restore belum dijalankan.
+- Kebijakan retensi dan pengecualian penghapusan akun belum ditinjau legal.

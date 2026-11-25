@@ -54,6 +54,7 @@ Konsekuensi: Fase 0 tidak mempertahankan kode aplikasi apa pun karena belum ada.
 | D-021 | Keputusan | Semua mutasi memakai `Idempotency-Key` untuk operasi yang dapat di-retry (trip start/finish, pesan, laporan, konvoi join, billing verify) | PRD 9.4 dan BR-13, BR-06 | Disimpan di Redis 24 jam + unique index di tabel terkait |
 | D-022 | Keputusan | Analitik tidak menyimpan koordinat presisi, plat, isi chat, token; event memakai ID internal dan properti non-sensitif | PRD 13.1 | Skema event diaudit sebelum rilis |
 | D-023 | Keputusan | OpenAPI dihasilkan dari DTO NestJS pada awal Slice 1A, bukan ditulis tangan di Fase 0; `API_CONTRACT.md` menjadi acuan field sampai file OpenAPI ada | Menulis OpenAPI tangan tanpa kode berisiko menyimpang dari implementasi; PRD 18 butir API contract tetap dicatat sebagai belum selesai | Checklist PRD 18 butir 5 tetap terbuka sampai Slice 1A |
+| D-024 | Keputusan | Tidak ada layanan eksternal yang diprovision pada Fase 0; semua integrasi berstatus belum tersedia sampai ada environment dan kredensial yang dikelola pemilik produk | Tidak ada bukti instance, kredensial, atau tagihan; mengklaim aktif akan melanggar instruksi | Dokumen dan laporan menyebut status "belum tersedia", bukan "aktif" |
 
 ---
 
@@ -112,3 +113,78 @@ Tidak ada konflik lain yang ditemukan. Tidak ada requirement PRD yang dibatalkan
 | O-08 | 2 — backend Firebase-heavy vs PostgreSQL/PostGIS | Ditutup oleh D-005 | Prompt menetapkan baseline | Modular monolith + PostGIS |
 
 O-02 dan O-07 adalah dua hal yang tidak boleh dikarang: tidak ada nama provider, harga, atau teks kebijakan yang dicantumkan di dokumen ini sebelum diputuskan pemilik produk.
+
+---
+
+## 6. Biaya, dependency, lisensi, dan risiko operasional
+
+Semua angka biaya **belum tersedia**. Tidak ada kuota, tagihan, atau kontrak yang bisa diklaim dari Fase 0.
+
+| Kategori | Yang dibutuhkan | Status | Risiko bila salah pilih | Mitigasi |
+|---|---|---|---|---|
+| Tile peta | Kuota request/MAU, batas cache, atribusi | Terbuka (O-02) | Biaya membengkak, pelanggaran ToS, peta kosong saat kuota habis | Adapter + evaluasi 2–3 provider, monitoring penggunaan, cache sesuai lisensi |
+| Routing | Biaya per rute/preview, SLA, cakupan motor | Terbuka | ETA salah, biaya per pencarian | Adapter, fallback, batas preview, disclaimer |
+| Geocoding | Biaya per pencarian, rate limit | Terbuka | Pencarian gagal saat ramai | Adapter, cache hasil, rate limit |
+| Cuaca | Kuota dan lisensi data | Terbuka | Data kadaluarsa dianggap peringatan | Tampilkan sumber + waktu, non-kritis |
+| Storage/CDN | Biaya per GB, egress, lifecycle | Terbuka (O-05) | Biaya media membengkak | Kuota, kompresi, signed URL, lifecycle |
+| FCM | Kuota gratis dan perilaku pengiriman | Belum diverifikasi | Notifikasi tidak sampai | Monitoring delivery, fallback in-app |
+| LiveKit/voice | Biaya per participant-minute, TURN/SFU | Fase 2 | Biaya audio lebih besar dari pendapatan | Uji beban, batas durasi, monitoring |
+| Google Play Billing | Komisi, pajak, refund, grace | Fase 4 | Entitlement tidak sinkron | Verifikasi server, rekonsiliasi, audit |
+| Identity provider | Kuota MAU, harga | Terbuka | Login gagal saat kuota habis | Adapter `TokenVerifier`, pemantauan |
+
+### 6.1 Dependency pihak ketiga
+
+| Dependency | Lisensi/ketentuan | Catatan |
+|---|---|---|
+| MapLibre Native | Open source; atribusi wajib | Rendering; bukan penyedia tile |
+| Data OpenStreetMap | ODbL dan atribusi “© OpenStreetMap contributors” | Wajib tampil; derivatif data tunduk ODbL |
+| Tile/routing/geocoding provider | Kontrak komersial/ToS masing-masing | Tidak boleh diasumsikan gratis atau boleh di-cache tanpa batas |
+| NestJS, PostgreSQL/PostGIS, Redis | Open source | Periksa lisensi saat mengunci versi |
+| LiveKit | Open source + layanan hosted opsional | Fase 2 |
+| Firebase Auth/FCM | Ketentuan Google | Data processing terms masuk kebijakan privasi |
+| Google Play Billing | Ketentuan Google Play | Komisi dan kebijakan refund |
+
+### 6.2 Risiko operasional
+
+| Risiko | Dampak | Mitigasi |
+|---|---|---|
+| Pembatasan background OEM | Tracking berhenti | FGS, panduan baterai, uji perangkat nyata, pemulihan sesi |
+| GPS tidak akurat | Jarak/rute salah | Filter outlier, simpan akurasi, tampilkan gap |
+| Provider peta berubah harga/down | Peta/rute gagal | Adapter, fallback, cache, monitoring, quota |
+| Redis down | Posisi live berhenti | Degradasi jelas; chat/trip tetap via database |
+| WebSocket fan-out | Latensi naik pada banyak konvoi | Uji beban 30 anggota, Redis pub/sub, batas koneksi |
+| Moderasi kewalahan | Konten berbahaya tampil | Antrean, prioritas, rate limit, laporan pengguna |
+| Billing tidak sinkron | Komplain/refund | Rekonsiliasi berkala, audit transaksi |
+| Litigasi lisensi peta/aset | Takedown/denda | Audit lisensi, aset original, atribusi |
+
+Tidak ada satu pun layanan pada tabel ini yang sudah diprovision atau diuji pada Fase 0.
+
+---
+
+## 7. Keputusan yang ditambahkan pada Fase 1
+
+| ID | Status | Keputusan | Alasan / bukti | Dampak |
+|---|---|---|---|---|
+| D-025 | Keputusan | Fase 1 memakai autentikasi lokal email/password: bcrypt 12 round, JWT HS256 akses 15 menit, refresh token opaque acak yang di-hash dan dirotasi, reset token sekali pakai. `AUTH_MODE=local` adalah satu-satunya mode yang diterima | Prompt Fase 1 meminta auth sesuai provider yang dipilih, tetapi tidak ada kredensial OIDC/Firebase maupun environment provider. Endpoint lokal dapat dijalankan dan diuji sekarang tanpa mengarang kredensial | Menyimpang dari D-006 (OIDC/Firebase). `TokenVerifier` tetap menjadi jalur pengganti saat provider tersedia; migrasi akun perlu rencana |
+| D-026 | Keputusan | Routing dan geocoding berada di balik adapter. Tanpa `ROUTING_BASE_URL`/`GEOCODING_BASE_URL`, API mengembalikan 503 `PROVIDER_NOT_CONFIGURED`; tidak ada rute, jarak, ETA, atau hasil tempat palsu. Android menampilkan state konfigurasi yang sama | Aturan kerja melarang hasil rute palsu dan mock sebagai backend final; provider produksi belum dipilih (O-02) | Peta dasar hanya tampil bila `RJ_MAP_STYLE_URL` diisi; fitur tetap dapat diuji dengan provider OSRM/Photon-compatible milik penguji |
+| D-027 | Keputusan | Eksekusi Fase 1 dibatasi pada fondasi, auth, profil/privasi, garasi, peta/adapter, place search + route preview, trip personal, permission, migrasi/validasi/otorisasi/observability. Konvoi real-time, voice/PTT, feed, rewards, subscription, 3D, chat, dan hazard tidak dikerjakan | Instruksi kerja Fase 1 eksplisit; PRD menempatkan sebagian fitur tersebut di Fase 1, sehingga ini deviasi lingkup yang harus dikembalikan ke roadmap | Requirement CNV-01…06, COM-01, SAF-01…03 berstatus ditunda pada traceability; bukan klaim selesai |
+| D-028 | Keputusan | OpenAPI dihasilkan dari DTO NestJS ke `docs/openapi.json` melalui `npm run openapi`; file ini adalah kontrak implementasi Fase 1, sedangkan `API_CONTRACT.md` tetap menjadi acuan produk | Melaksanakan D-023 setelah Slice 1A benar-benar ada | Perubahan DTO wajib diikuti regenerasi OpenAPI; file tidak ditulis tangan |
+| D-029 | Operasional | Build Android Fase 1 diverifikasi dengan Gradle 8.13 + JDK 21 portabel di `android/.tooling/`; Android Studio JBR 25 tidak dipakai karena Gradle 8.13/AGP 8.11 menolaknya | Build pertama gagal pada JDK 25 (`25.0.4`) dan lulus setelah JDK 21; folder tooling diabaikan git | Mesin build/CI harus menyediakan JDK 17–21; dokumentasikan di pipeline |
+
+---
+
+## 8. Keputusan yang ditambahkan pada Fase 2
+
+| ID | Status | Keputusan | Alasan / bukti | Dampak |
+|---|---|---|---|---|
+| D-030 | Keputusan | Kode undangan 10 karakter Crockford Base32, disimpan sebagai HMAC-SHA256 dengan `INVITE_HMAC_PEPPER`; default expiry 24 jam dan `maxUses` 20 | D-016 menetapkan 8 karakter tanpa angka operasional; 10 karakter memberi ~50 bit dan tetap mudah diketik. Pepper terpisah mencegah hash dapat dihitung ulang dari kode bila secret JWT bocor | Menggantikan panjang pada D-016; produksi wajib mengisi pepper dan tidak boleh memakai fallback secret |
+| D-031 | Keputusan | Status konvoi `draft/lobby/active/paused/completed/cancelled`; `completed` dan `cancelled` terminal. `end` dipertahankan sebagai alias `complete` | Menyelaraskan PRD/UI dengan model data; `ended` pada rancangan lama tidak dipakai | Event dan API memakai `completed`; dokumen yang menyebut `ended` adalah rancangan lama |
+| D-032 | Keputusan | Bila semua socket seorang leader terputus, server segera memindahkan peran leader ke co-leader atau anggota aktif terlama, menjadikan leader lama `co_leader`, menaikkan versi, menulis audit, dan menyiarkan `convoy.member.updated`. Bila leader menekan keluar, co-leader/anggota aktif terlama juga dipromosikan dan `convoys.leader_id` diperbarui; bila sendirian, konvoi dibatalkan | BR-07/CNV-07 membutuhkan kelangsungan kepemimpinan; menunggu tanpa batas membuat konvoi tidak dapat dikelola | Handoff dapat terjadi saat koneksi jaringan putus atau leader keluar; klien harus memproses perubahan peran |
+| D-033 | Keputusan | Kapasitas efektif = 1 leader + anggota `active` + permintaan `requested`. Default gratis 3, maksimum server 30, nilai dari `user_entitlements`; `capacity` klien di-clamp dan ditolak bila di atas maksimum | CNV-08/BR-10 melarang mempercayai kapasitas klien; permintaan pending harus memesan tempat agar tidak overbook | Pengguna gratis dibatasi 3 kursi termasuk leader; upgrade paket belum tersedia sampai billing |
+| D-034 | Keputusan | `REDIS_URL` tersedia → `RedisRealtimeStore`; tidak tersedia di development/test → store memori satu proses. `NODE_ENV=production` menolak start tanpa Redis. Buffer event memakai list Redis 2000 entri/24 jam, bukan Stream | Menjaga test dapat berjalan tanpa Docker tanpa menyamarkan produksi; Stream belum dibutuhkan untuk replay terbatas | Fallback memori tidak tahan restart dan tidak lintas proses; multi-instance belum didukung |
+| D-035 | Keputusan | Join tidak langsung aktif; semua permintaan `requested` harus disetujui leader/co-leader. Satu pengguna hanya punya satu membership `active/requested` | CNV-02 dan BR-02; mencegah satu pengguna masuk dua konvoi atau melewati persetujuan | Perlu aksi leader; pembatalan permintaan lewat `POST /leave` |
+| D-036 | Sebagian / batasan | Klien konvoi Android berbagi lokasi selama proses aplikasi dan ViewModel aktif; belum memakai foreground service khusus konvoi | Tracking trip sudah memiliki FGS, tetapi menambah FGS kedua menuntut desain notifikasi dan lifecycle terpisah; emulator tidak tersedia untuk menguji | Berbagi berhenti saat proses dibunuh; belum memenuhi janji background penuh dan harus diselesaikan sebelum beta |
+| D-037 | Keputusan | Rate posisi 1 pesan/detik per koneksi; koordinat/akurasi/waktu divalidasi; posisi duplikat/lebih lama ditolak `OUT_OF_ORDER`; stale default 30 detik dicek berkala | Implementasi awal memakai 1/detik untuk test dan responsivitas; angka dapat dikonfigurasi. Deduplikasi mencegah posisi mundur | Berbeda dari rancangan 1/2 detik di `REALTIME_EVENTS.md`; kontrak aktual menang |
+| D-038 | Keputusan | Perubahan konvoi menulis `convoy_audit_logs` (insert-only) dengan actor, action, target, metadata, request ID bila tersedia | CNV-03 dan PRD 5.14; investigasi sengketa anggota | Tidak ada endpoint aplikasi untuk mengubah/menghapus audit; retensi belum ditetapkan |
+| D-039 | Keputusan | Hanya leader/co-leader yang boleh mengubah rute, dan `route_id` harus milik actor. Setiap perubahan menaikkan `version` dan `route_version`, lalu menyiarkan `convoy.route.updated` | BR-03; mencegah anggota menyuntikkan rute orang lain | Rute yang dihapus menjadi `NULL`; klien harus menangani `routeId: null` |
+| D-040 | Keputusan | Chat, voice/PTT, hazard, billing, push konvoi, dan deep link undangan Android tidak termasuk eksekusi Phase 2 | Instruksi kerja hanya meminta CNV-01…CNV-08; mengerjakan sisanya akan memperluas fase tanpa test yang memadai | Requirement terkait tetap belum selesai; jangan mengklaim Phase 2 PRD penuh |

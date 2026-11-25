@@ -53,6 +53,10 @@ Indeks: `lower(username)` unik, `status`, `city`.
 - Unique partial index `(owner_id) where is_primary and deleted_at is null`.
 - Batas jumlah kendaraan per paket divalidasi server (VEH-02).
 
+### `emergency_contacts`
+
+`id`, `user_id`, `name_ciphertext` bytea, `phone_ciphertext` bytea, `relationship` text null, `key_version` smallint, `created_at`, `updated_at`. Hanya pemilik yang dapat membaca; tidak pernah masuk profil publik, feed, atau komunitas (SAF-06). Direncanakan Fase 3, tabel disiapkan agar model tidak berubah bentuk.
+
 ## 3. Sosial dasar
 
 - `follows(follower_id, followed_id, status enum pending/accepted, created_at, pk(follower_id, followed_id))`.
@@ -67,7 +71,7 @@ Indeks: `lower(username)` unik, `status`, `city`.
 
 ### `routes`
 
-`id`, `owner_id`, `name` null, `start_point geography(Point,4326)`, `destination geography(Point,4326)`, `geometry geometry(LineString,4326)`, `distance_m` int, `duration_s` int, `provider` text, `provider_route_ref` text, `created_at`. Indeks GIST `geometry`; route disimpan sebagai snapshot agar preview yang disetujui konvoi tidak berubah diam-diam.
+`id`, `owner_id`, `name` null, `origin geography(Point,4326)` null, `destination geography(Point,4326)` null, `route_geometry geometry(LineString,4326)`, `waypoints jsonb`, `distance_m` int, `duration_s` int, `provider` text, `created_at`, `updated_at`. Indeks GIST `route_geometry`; route disimpan sebagai snapshot agar preview yang disetujui konvoi tidak berubah diam-diam. `POST /v1/routes/{id}/recalculate` membuat baris baru, bukan menimpa snapshot lama. Route lama tanpa `origin`/`destination` memakai `ST_StartPoint`/`ST_EndPoint` geometri saat dihitung ulang.
 
 ### `route_waypoints`
 
@@ -107,14 +111,14 @@ Indeks unik parsial: satu user hanya punya satu keanggotaan `active`/`requested`
 
 ### `trips`
 
-`id`, `user_id`, `convoy_id` null, `vehicle_id` null, `status` enum `active`,`paused`,`finished`,`recovered`,`discarded`, `started_at`, `ended_at` null, `distance_m` int default 0, `duration_s` int default 0, `avg_speed_kph` numeric(5,1) null, `point_count` int default 0, `data_quality` jsonb null, `route_geometry geometry(LineString,4326)` null, `created_at`, `updated_at`.
+`id`, `user_id`, `vehicle_id` null, `route_id` null, `status` enum `active`,`paused`,`finished`, `started_at`, `ended_at` null, `paused_at` null, `paused_seconds` int default 0, `distance_m` int default 0, `duration_s` int default 0, `moving_seconds` int default 0, `avg_speed_kph` numeric(5,1) null, `max_speed_kph` numeric(5,1) null, `start_point geography(Point,4326)` null, `end_point geography(Point,4326)` null, `point_count` int default 0, `data_quality` jsonb null, `created_at`, `updated_at`.
 
 - Unique parsial `(user_id) where status in ('active','paused')` menegakkan BR-01.
 - `data_quality` menyimpan `{gaps, rejected_points, avg_accuracy}` agar UI dapat menampilkan kualitas data (TRP-03).
 
 ### `trip_points`
 
-`trip_id`, `seq` int, `location geography(Point,4326)`, `accuracy_m` real, `speed_mps` real null, `heading_deg` real null, `recorded_at` timestamptz, `quality` enum `ok`,`low_accuracy`,`gap`, pk `(trip_id, seq)`.
+`trip_id`, `seq` int, `location geography(Point,4326)`, `accuracy_m` real, `speed_mps` real null, `heading_deg` real null, `recorded_at` timestamptz, `quality` enum `ok`,`low_accuracy`,`spike`,`gap`, pk `(trip_id, seq)`.
 
 - Dipartisi bulanan berdasarkan `recorded_at`; partisi lama dihapus sesuai retensi (D-017).
 - Titik mentah tidak dipakai untuk analitik lintas pengguna tanpa agregasi.
@@ -247,3 +251,67 @@ Angka retensi adalah default engineering (D-017), bukan kepatuhan hukum. PRD 17 
 | BR-10 entitlement server-side | Tabel entitlement + cek service |
 | BR-13 media/pesan retry | Unique constraint + idempotency key |
 | BR-15 pemulihan sesi | Status `recovered` + draft lokal |
+
+## 20. Klasifikasi data per tabel
+
+| Kategori | Tabel/kolom | Perlakuan |
+|---|---|---|
+| **Geospasial** | `routes.geometry`, `route_waypoints.location`, `trip_points.location`, `hazard_reports.location`, `favorite_places.location`, `convoys.meeting_point`, `convoys.destination`, `community_events.meeting_point` | PostGIS, indeks GIST, akses per resource; koordinat presisi tidak masuk analytics |
+| **Sensitif** | `vehicles.plate_ciphertext`, `emergency_contacts.*_ciphertext`, `subscriptions.purchase_token_ref`, `user_consents`, `admin_audit_logs`, `reports` | Enkripsi kolom atau akses ketat, redaksi log, audit akses |
+| **Ephemeral/live** | Redis `convoy:{id}:pos:*`, `presence`, `ws:ticket:*`, `rl:*`, `idem:*` | TTL, dihapus saat sesi berakhir; bukan sumber kebenaran historis |
+| **Historis** | `trips`, `trip_points`, `convoy_messages`, `hazard_reports`, `point_ledger`, `admin_audit_logs`, `billing_transactions` | Retensi terjadwal, partisi untuk titik, append-only untuk ledger/audit |
+| **Media** | `media_assets`, `post_media`, `album_media`, kolom `*_media_id` | Object storage + metadata; signed URL; moderasi; lifecycle storage |
+| **Publik** | `communities` publik, `feed_posts` publik, `badges` | Tetap melalui moderasi dan kontrol visibilitas |
+| **Internal** | `plans`, `plan_entitlements`, `config_entries`, `outbox_events` | Tidak diekspos mentah; hanya field yang diizinkan |
+
+Data lokasi live adalah **ephemeral**: tidak boleh dipakai untuk laporan historis, analytics, atau rekomendasi tanpa consent dan dasar pemrosesan terpisah (PRD 11.5).
+
+## 21. Implementasi Phase 2 (fakta)
+
+Skema aktual berada di `backend/migrations/0002_convoys.sql`, bukan pecahan `0005` seperti rancangan awal. Tidak ada tabel posisi live atau pesan konvoi pada fase ini.
+
+### `user_entitlements`
+
+| Kolom | Tipe | Catatan |
+|---|---|---|
+| `user_id` | uuid PK → users | Satu baris per pengguna; bila tidak ada, default gratis dipakai service |
+| `plan_code` | text | Default `free`; belum terhubung billing |
+| `convoy_capacity` | smallint | 1–100; test beban memakai 30 |
+| `updated_at` | timestamptz | |
+
+### `convoys`
+
+`id uuid PK`, `leader_id → users`, `name varchar(80)`, `meeting_point geography(Point,4326)`, `destination geography(Point,4326)`, `waypoints jsonb default '[]'`, `scheduled_at`, `capacity smallint (2–100)`, `status text` (`draft/lobby/active/paused/completed/cancelled`), `route_id → routes on delete set null`, `route_version int`, `version int`, `started_at`, `paused_at`, `completed_at`, `cancelled_at`, `created_at`, `updated_at`.
+
+Tidak ada kolom terpisah untuk tujuan/waypoint PostGIS seperti rancangan; waypoint disimpan sebagai JSON tervalidasi. `completed` menggantikan `ended` dan merupakan status terminal. `version` naik pada perubahan status/anggota/rute dan dipakai untuk `If-Match`.
+
+### `convoy_members`
+
+PK `(convoy_id, user_id)`; `role` (`leader/co_leader/member`), `status` (`active/requested/left/removed`), `sharing_consent bool default false`, `invited_by`, `joined_at`, `last_seen_at`, `created_at`, `updated_at`.
+
+Unique partial index `convoy_one_open_membership` pada `user_id WHERE status IN ('active','requested')` menegakkan BR-02. Tidak ada status `invited`; undangan diwakili baris `convoy_invites`.
+
+### `convoy_invites`
+
+`id`, `convoy_id`, `created_by`, `code_hash text unique`, `expires_at`, `max_uses smallint`, `used_count smallint`, `revoked_at`, `revoked_by`, `created_at`.
+
+Kode asli tidak disimpan. Hash HMAC-SHA256 dengan `INVITE_HMAC_PEPPER`; panjang kode 10 karakter Crockford Base32 (D-030).
+
+### `convoy_audit_logs`
+
+`id`, `convoy_id`, `actor_id`, `action text`, `target_user_id`, `metadata jsonb`, `request_id`, `created_at`. Aksi mencakup create, join, approve/reject, role change, remove, leave, transfer, handoff, route update, invite create/revoke, dan status transition. Hanya insert; tidak ada endpoint aplikasi untuk mengubah/menghapus.
+
+### Redis aktual
+
+| Key | Tipe | TTL | Isi |
+|---|---|---|---|
+| `convoy:{id}:pos:{userId}` | string JSON | 300 s (konfigurasi) | posisi terakhir + `lastSeenAt`, `clientSeq` |
+| `convoy:{id}:presence` | hash | 300 s | userId → presence JSON |
+| `convoy:{id}:events` | list | 24 jam | maksimum 2000 event untuk replay |
+| `ws:ticket:{sha256}` | string JSON | 60 s | tiket sekali pakai |
+
+`convoy:{id}:seq` dan key rate limit juga memakai Redis saat tersedia. Tidak ada Redis Stream pada implementasi ini. Tanpa `REDIS_URL` di development/test, adapter memori dipakai; `NODE_ENV=production` menolak start tanpa `REDIS_URL`.
+
+### Yang belum ada
+
+`convoy_messages`, hazard, media konvoi, dan tabel billing belum dibuat. Klaim fitur tersebut tidak boleh merujuk ke skema ini.
