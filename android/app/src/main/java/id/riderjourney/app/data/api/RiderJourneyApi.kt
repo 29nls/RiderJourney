@@ -196,4 +196,30 @@ interface RiderJourneyApi {
 
     @POST("v1/realtime/ticket")
     suspend fun realtimeTicket(@Body request: RealtimeTicketRequest): RealtimeTicketDto
+
+    @GET("v1/convoys/{id}/messages")
+    suspend fun convoyMessages(
+        @Path("id") id: String,
+        @Query("limit") limit: Int = 20,
+        @Query("before") before: String? = null,
+    ): MessagePageDto
+
+    @POST("v1/convoys/{id}/messages")
+    suspend fun sendConvoyMessage(@Path("id") id: String, @Body request: SendMessageRequest): MessageDto
+
+    @GET("v1/hazards/nearby")
+    suspend fun nearbyHazards(
+        @Query("lat") lat: Double,
+        @Query("lng") lng: Double,
+        @Query("radiusM") radiusM: Int = 3000,
+    ): HazardListDto
+
+    @POST("v1/hazards")
+    suspend fun createHazard(@Body request: CreateHazardRequest): HazardDto
+
+    @POST("v1/hazards/{id}/confirm")
+    suspend fun confirmHazard(@Path("id") id: String, @Body request: ConfirmHazardRequest): HazardConfirmDto
+
+    @POST("v1/hazards/{id}/report")
+    suspend fun reportHazard(@Path("id") id: String, @Body request: HazardReportRequest)
 }

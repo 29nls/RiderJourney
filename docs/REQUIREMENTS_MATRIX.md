@@ -187,3 +187,20 @@ Eksekusi Phase 2 dibatasi pada CNV-01…CNV-08. Requirement Phase 2 lain di PRD 
 | CNV-08 | Sebagian | Kapasitas/entitlement ditegakkan server (`user_entitlements`), tidak percaya field klien; billing Google Play dan paket berbayar belum ada |
 
 Verifikasi Phase 2: `cd backend && npm test` → 10/10 lulus; Android `:app:testDebugUnitTest :app:assembleDebug` → BUILD SUCCESSFUL (14 unit test lama, tidak ada unit test konvoi baru); OpenAPI 50 path. Redis nyata, multi-instance fanout, dan UI perangkat belum diuji. Rincian ada di `PHASE_2_REPORT.md`.
+
+## 8. Status implementasi Phase 6 (26 November 2026)
+
+Bagian ini menambahkan status aktual setelah Phase 6. Tabel 1–3 tetap historis dan tidak diubah.
+
+| ID | Status | Bukti / catatan |
+|---|---|---|
+| COM-01 | Sebagian | Android: daftar pesan, kirim, pagination `before`, state `sending/failed/sent`, retry memakai `clientMessageId` yang sama, dedupe berdasarkan id. Belum: langganan realtime pesan di layar chat, uji perangkat |
+| SAF-01 | Sebagian | Android: buat laporan dengan GPS terakhir, kategori, catatan opsional; backend menyimpan jenis, koordinat, waktu, catatan. Foto opsional belum dipilih dari galeri |
+| SAF-02 | Selesai (backend) | TTL dihitung server, sweep mengubah status kedaluwarsa; Android menampilkan status aktif/kedaluwarsa |
+| SAF-03 | Sebagian | Konfirmasi "masih ada" dan "tidak relevan" dari Android; reputasi belum ada di klien maupun backend |
+| ACC-04 | Sebagian | Backend: export, permintaan penghapusan, grace period, pembatalan. Android: belum ada layar |
+| ACC-05 | Sebagian | Backend menyimpan consent; Android belum punya layar consent |
+| RID-01 / VEH-01 | Sebagian | URL avatar dan foto kendaraan ada di backend; unggah dari Android belum ada |
+| MAP-05 | Sebagian | Endpoint favorit ada di backend; Android belum memakai |
+
+Android yang belum memiliki layar sama sekali pada Phase 6: consent/privasi, permintaan penghapusan akun, unggah media, tempat favorit.

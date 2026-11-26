@@ -123,3 +123,32 @@ Semua harus benar sebelum `BILLING_ENABLED` dan `PAID_FEATURES_ENABLED` menjadi 
 10. Rencana rollback dan komunikasi pelanggan disetujui.
 
 Sampai semua terpenuhi, biarkan kedua switch false.
+
+## 11. Phase 6 — hasil audit integrasi (26 November 2026)
+
+Status keseluruhan tidak berubah: **BELUM SIAP PRODUKSI**.
+
+Bukti yang dijalankan ulang pada Phase 6:
+
+- [x] **LULUS** `cd backend && npm run typecheck` exit 0.
+- [x] **LULUS** `cd backend && npm test` **40 test lulus, 0 gagal** (37 lama + 3 regresi Phase 6).
+- [x] **LULUS** `cd admin && npm run build` exit 0.
+- [x] **LULUS** `cd android && ./gradlew testDebugUnitTest` **16 test lulus, 0 gagal** (JDK 21).
+- [x] **LULUS** `cd android && ./gradlew assembleDebug` menghasilkan `app-debug.apk`.
+- [x] **LULUS** `npm audit --omit=dev` di backend dan admin: 0 kerentanan.
+- [x] **LULUS** CI GitHub run #3 pada `main` hijau (backend dan admin).
+
+Perbaikan keamanan Phase 6:
+
+- [x] **LULUS** Konfirmasi reset kata sandi mengonsumsi token di dalam `UPDATE ... WHERE used_at IS NULL RETURNING`, sehingga dua permintaan bersamaan tidak dapat sama-sama menang. Diuji.
+- [x] **LULUS** Batas login per akun (`login_throttles`): 10 kegagalan dalam 15 menit mengunci 15 menit, dihitung per email, bukan per IP. Diuji.
+- [x] **LULUS** Parameter UUID divalidasi sebagai 400 `INVALID_ID`, bukan 500 dari cast PostgreSQL. Diuji pada chat dan bahaya.
+
+Temuan baru yang **belum** diperbaiki (jangan dianggap selesai):
+
+- [ ] **P0** Presigned upload di `media.service.ts` menandatangani string dengan HMAC sederhana, bukan SigV4 kanonikal. URL yang dihasilkan tidak akan diterima S3/MinIO sungguhan. Tidak diuji terhadap storage nyata.
+- [ ] **P0** `POST /v1/media/uploads/{id}/complete` mempercayai `sizeBytes` dari klien; tidak ada `HEAD` objek, tidak ada verifikasi ukuran/MIME/checksum dari storage, dan baris `size_bytes` diturunkan dari nilai klien.
+- [ ] **P0** Penghapusan akun belum terbukti menghapus byte objek di storage; tidak ada worker outbox penghapusan objek yang diuji.
+- [ ] **BLOCKED** Uji end-to-end media dengan MinIO/S3: tidak ada endpoint, kredensial, atau container.
+- [ ] **BLOCKED** Uji perangkat Android: tidak ada emulator/perangkat yang menjalankan build ini; FGS, izin lokasi, process death, dan offline belum diuji.
+- [ ] **BLOCKED** Redis nyata, LiveKit, staging, dan Play Billing tetap seperti sebelumnya.

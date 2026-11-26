@@ -396,3 +396,18 @@ Default permission: `member` mendapat `post.create` dan `album.create`; `moderat
 ## 18. Yang belum ada di kontrak ini
 
 Voice, poin, leaderboard, redeem, website komunitas, dan endpoint komunitas lain di luar alur minimal di atas belum ada di kontrak ini.
+
+## 19. Perubahan kontrak Phase 6
+
+Tidak ada endpoint baru. Yang berubah adalah perilaku dan error yang harus ditangani klien:
+
+| Endpoint | Perubahan |
+|---|---|
+| `POST /v1/auth/login` | Setelah 10 kegagalan untuk email yang sama dalam 15 menit, respons menjadi `429` dengan `code: LOGIN_LOCKED` dan `retryAfterSeconds`. Kata sandi yang benar pun ditolak sampai kunci berakhir. Kunci dihitung per akun, bukan per IP |
+| `POST /v1/auth/password/reset/confirm` | Token dikonsumsi secara atomik; pemakaian kedua mengembalikan `401 INVALID_RESET_TOKEN`. Semua refresh token akun dicabut saat berhasil |
+| `POST /v1/auth/email/verify` | Token verifikasi juga dikonsumsi secara atomik |
+| `GET/POST /v1/convoys/{id}/messages`, `POST /v1/convoys/{id}/messages/{messageId}/report` | `id` dan `messageId` wajib UUID; selain itu `400 INVALID_ID` |
+| `POST /v1/hazards/{id}/confirm`, `POST /v1/hazards/{id}/report` | `id` wajib UUID; `400 INVALID_ID`. UUID yang tidak ada tetap `404 HAZARD_NOT_FOUND` |
+| `GET /v1/media/{id}/access`, `POST /v1/media/uploads/{id}/complete`, `GET /v1/media/{id}/url` | `id` wajib UUID; `400 INVALID_ID` |
+
+Kontrak lain, termasuk bentuk sukses, tidak berubah. `docs/openapi.json` hanya memuat path dan skema, sehingga kode error di atas tetap perlu ditangani klien secara eksplisit.

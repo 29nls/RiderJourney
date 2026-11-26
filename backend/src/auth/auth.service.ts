@@ -1,4 +1,4 @@
-import { ConflictException, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, HttpException, HttpStatus, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import bcrypt from 'bcryptjs';
 import { v7 as uuidv7 } from 'uuid';
 import { APP_CONFIG, type AppConfig } from '../config/env.js';
@@ -69,16 +69,80 @@ export class AuthService {
     return { ...issued, user: toPublicUser(user), ...(verificationToken ? { verificationToken } : {}) };
   }
 
+  /**
+   * Account-scoped login throttle. The global throttler only sees one IP, so a
+   * distributed guess against one inbox and one IP guessing across many inboxes
+   * both slip through it. This counts failures per account instead.
+   */
+  private async assertNotLocked(emailHash: string): Promise<void> {
+    const rows = await this.db.query<{ locked_until: Date | null }>(
+      'SELECT locked_until FROM login_throttles WHERE email_hash = $1',
+      [emailHash],
+    );
+    const lockedUntil = rows[0]?.locked_until;
+    if (!lockedUntil || new Date(lockedUntil).getTime() <= Date.now()) return;
+    const retryAfterSeconds = Math.max(1, Math.ceil((new Date(lockedUntil).getTime() - Date.now()) / 1000));
+    throw new HttpException(
+      {
+        code: 'LOGIN_LOCKED',
+        title: 'Login ditahan sementara',
+        detail: 'Terlalu banyak percobaan gagal untuk akun ini. Coba lagi nanti atau gunakan pemulihan kata sandi.',
+        retryAfterSeconds,
+      },
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
+  }
+
+  /**
+   * One statement, so concurrent failures cannot each read the old count and
+   * write the same increment. The lock is derived from the same expression, which
+   * keeps the count and the lock consistent under concurrency.
+   */
+  private async recordFailedLogin(emailHash: string): Promise<void> {
+    const rows = await this.db.query<{ failed_count: number; locked_until: Date | null }>(
+      `INSERT INTO login_throttles (email_hash, failed_count, window_started_at)
+       VALUES ($1, 1, now())
+       ON CONFLICT (email_hash) DO UPDATE SET
+         window_started_at = CASE
+           WHEN login_throttles.window_started_at < now() - interval '15 minutes' THEN now()
+           ELSE login_throttles.window_started_at END,
+         failed_count = CASE
+           WHEN login_throttles.window_started_at < now() - interval '15 minutes' THEN 1
+           ELSE login_throttles.failed_count + 1 END,
+         locked_until = CASE
+           WHEN (CASE
+             WHEN login_throttles.window_started_at < now() - interval '15 minutes' THEN 1
+             ELSE login_throttles.failed_count + 1 END) >= 10
+           THEN now() + interval '15 minutes'
+           ELSE login_throttles.locked_until END,
+         updated_at = now()
+       RETURNING failed_count, locked_until`,
+      [emailHash],
+    );
+    const lockedUntil = rows[0]?.locked_until;
+    if (lockedUntil && new Date(lockedUntil).getTime() > Date.now()) {
+      await this.assertNotLocked(emailHash);
+    }
+  }
+
+  private async clearLoginThrottle(emailHash: string): Promise<void> {
+    await this.db.query('DELETE FROM login_throttles WHERE email_hash = $1', [emailHash]);
+  }
+
   async login(emailInput: string, password: string, userAgent?: string): Promise<AuthResult> {
     const email = this.normalizeEmail(emailInput);
+    const emailHash = sha256(email);
+    await this.assertNotLocked(emailHash);
     const rows = await this.db.query<UserRow>('SELECT * FROM users WHERE lower(email) = $1', [email]);
     const user = rows[0];
     if (!user?.password_hash || !(await bcrypt.compare(password, user.password_hash))) {
+      await this.recordFailedLogin(emailHash);
       throw new UnauthorizedException({ code: 'INVALID_CREDENTIALS', title: 'Login gagal', detail: 'Email atau kata sandi salah.' });
     }
     if (user.status !== 'active') {
       throw new UnauthorizedException({ code: 'ACCOUNT_UNAVAILABLE', title: 'Akun tidak tersedia', detail: 'Akun tidak dapat digunakan.' });
     }
+    await this.clearLoginThrottle(emailHash);
     const issued = await this.tokens.issue(user.id, userAgent);
     return { ...issued, user: toPublicUser(user) };
   }
@@ -100,39 +164,46 @@ export class AuthService {
     return { accepted: true, ...(token ? { devToken: token } : {}) };
   }
 
+  /**
+   * The token is consumed by the same UPDATE that selects it. Checking used_at in
+   * application code first would let two concurrent requests both pass the check
+   * and both set a password; only the winner of this row update may proceed.
+   */
   async confirmPasswordReset(token: string, newPassword: string): Promise<void> {
-    const rows = await this.db.query<{ id: string; user_id: string; expires_at: Date; used_at: Date | null }>(
-      `SELECT id, user_id, expires_at, used_at FROM one_time_tokens
-       WHERE token_hash = $1 AND kind = 'password_reset'`,
-      [sha256(token)],
-    );
-    const record = rows[0];
-    if (!record || record.used_at || new Date(record.expires_at).getTime() <= Date.now()) {
-      throw new UnauthorizedException({ code: 'INVALID_RESET_TOKEN', title: 'Token reset tidak valid', detail: 'Token reset tidak valid atau kedaluwarsa.' });
-    }
     const hash = await bcrypt.hash(newPassword, 12);
     await this.db.transaction(async (tx) => {
+      const consumed = await tx.query<{ user_id: string }>(
+        `UPDATE one_time_tokens SET used_at = now()
+         WHERE token_hash = $1 AND kind = 'password_reset'
+           AND used_at IS NULL AND expires_at > now()
+         RETURNING user_id`,
+        [sha256(token)],
+      );
+      const record = consumed[0];
+      if (!record) {
+        throw new UnauthorizedException({ code: 'INVALID_RESET_TOKEN', title: 'Token reset tidak valid', detail: 'Token reset tidak valid atau kedaluwarsa.' });
+      }
       await tx.query('UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1', [record.user_id, hash]);
-      await tx.query('UPDATE one_time_tokens SET used_at = now() WHERE id = $1', [record.id]);
       await tx.query('UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [record.user_id]);
     });
   }
 
   async verifyEmail(token: string): Promise<{ verified: true }> {
-    const rows = await this.db.query<{ id: string; user_id: string; expires_at: Date; used_at: Date | null }>(
-      `SELECT id, user_id, expires_at, used_at FROM one_time_tokens
-       WHERE token_hash = $1 AND kind = 'email_verify'`,
-      [sha256(token)],
-    );
-    const record = rows[0];
-    if (!record || record.used_at || new Date(record.expires_at).getTime() <= Date.now()) {
-      throw new UnauthorizedException({ code: 'INVALID_VERIFICATION_TOKEN', title: 'Token verifikasi tidak valid', detail: 'Token verifikasi tidak valid atau kedaluwarsa.' });
-    }
-    await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
+      const consumed = await tx.query<{ user_id: string }>(
+        `UPDATE one_time_tokens SET used_at = now()
+         WHERE token_hash = $1 AND kind = 'email_verify'
+           AND used_at IS NULL AND expires_at > now()
+         RETURNING user_id`,
+        [sha256(token)],
+      );
+      const record = consumed[0];
+      if (!record) {
+        throw new UnauthorizedException({ code: 'INVALID_VERIFICATION_TOKEN', title: 'Token verifikasi tidak valid', detail: 'Token verifikasi tidak valid atau kedaluwarsa.' });
+      }
       await tx.query('UPDATE users SET email_verified = true, updated_at = now() WHERE id = $1', [record.user_id]);
-      await tx.query('UPDATE one_time_tokens SET used_at = now() WHERE id = $1', [record.id]);
+      return { verified: true as const };
     });
-    return { verified: true };
   }
 
   async session(userId: string): Promise<PublicUser & { activeTripId: string | null }> {

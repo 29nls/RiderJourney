@@ -7,10 +7,13 @@ Urutan pengerjaan mengikuti PRD 15. Tidak ada tanggal, durasi, atau jumlah tim y
 | Fase | Status | Catatan |
 |---|---|---|
 | 0 — Discovery dan fondasi | Selesai dengan pengecualian | Provider peta (exit criteria) belum dipilih; brand dan legal terbuka |
-| 1 — MVP touring inti (P0) | Belum dimulai | Menunggu instruksi eksplisit |
-| 2 — Komunikasi dan komunitas (P1) | Belum dimulai | |
-| 3 — Journey dan engagement (P1/P2) | Belum dimulai | |
-| 4 — Monetisasi dan fitur premium (P2) | Belum dimulai | |
+| 1 — MVP touring inti (P0) | Selesai sebagian | Auth, profil, garasi, peta/rute, trip, konvoi, chat, dan bahaya ada di backend dan Android; lihat `REQUIREMENTS_MATRIX.md` bagian 7 |
+| 2 — Komunikasi dan komunitas (P1) | Sebagian | Backend sosial/komunitas/voice tersedia; klien Android belum memakainya. Lihat `PHASE_2_REPORT.md` |
+| 3 — Journey dan engagement (P1/P2) | Sebagian | Replay, poster, album, poin ada di backend. Lihat `PHASE_4_REPORT.md` |
+| 4 — Monetisasi dan fitur premium (P2) | Sebagian, mati secara default | Billing, entitlement, redeem, admin RBAC ada; `BILLING_ENABLED=false`. Lihat `PHASE_5_REPORT.md` |
+| 6 — Integration & P0 gap closure | Selesai dengan blocker | Chat dan bahaya Android ditambahkan; P0 auth diperbaiki; media dan perangkat tetap BLOCKED. Lihat `PHASE_6_REPORT.md` |
+
+Tabel di atas sebelumnya menyatakan fase 1–4 "belum dimulai". Itu tidak lagi benar: kode fase 1–5 sudah ada di repository, dan status per requirement dicatat di `REQUIREMENTS_MATRIX.md` serta laporan masing-masing fase. Status "sebagian" berarti jalur backend ada dan diuji, bukan bahwa klien Android sudah memakainya.
 
 ## 2. Fase 0 — Discovery dan fondasi
 

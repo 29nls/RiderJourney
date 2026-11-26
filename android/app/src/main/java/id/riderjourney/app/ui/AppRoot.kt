@@ -26,6 +26,8 @@ private val tabs = listOf(
     Tab("route", "Rute", "R"),
     Tab("trips", "Trip", "T"),
     Tab("convoy", "Konvoi", "K"),
+    Tab("chat", "Chat", "C"),
+    Tab("hazard", "Bahaya", "!"),
     Tab("profile", "Profil", "P"),
 )
 
@@ -75,6 +77,8 @@ fun RiderJourneyApp(
                         "route" -> RouteScreen()
                         "trips" -> TripsScreen()
                         "convoy" -> ConvoyScreen()
+                        "chat" -> ChatScreen()
+                        "hazard" -> HazardScreen()
                         "profile" -> ProfileScreen(session, sessionViewModel)
                     }
                 }

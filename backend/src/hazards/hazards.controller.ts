@@ -1,5 +1,6 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '../auth/auth.guard.js';
+import { UuidParamPipe } from '../common/uuid.pipe.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { UserRow } from '../auth/auth.types.js';
 import { ConfirmHazardDto, CreateHazardDto, NearbyQueryDto, ReportHazardDto } from './hazards.dto.js';
@@ -22,13 +23,13 @@ export class HazardsController {
 
   @Post(':id/confirm')
   @HttpCode(200)
-  confirm(@CurrentUser() user: UserRow, @Param('id') id: string, @Body() dto: ConfirmHazardDto) {
+  confirm(@CurrentUser() user: UserRow, @Param('id', UuidParamPipe) id: string, @Body() dto: ConfirmHazardDto) {
     return this.hazards.confirm(user.id, id, dto);
   }
 
   @Post(':id/report')
   @HttpCode(201)
-  report(@CurrentUser() user: UserRow, @Param('id') id: string, @Body() dto: ReportHazardDto) {
+  report(@CurrentUser() user: UserRow, @Param('id', UuidParamPipe) id: string, @Body() dto: ReportHazardDto) {
     return this.hazards.report(user.id, id, dto);
   }
 }

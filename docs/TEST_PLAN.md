@@ -216,3 +216,27 @@ Perintah: `cd backend && npm test` (build TypeScript + seluruh `dist/test`).
 | `community.test.ts` | create komunitas + seed permission, join privat menjadi request, approve/decline, daftar anggota, perubahan role dengan permission, audit, post audience komunitas, album komunitas + media, join publik langsung | lulus |
 
 Hasil: **36 test lulus, 0 gagal, exit 0**. `node tools/junk-check.mjs` melaporkan 0 baris mencurigakan pada 205 berkas. OpenAPI diregenerasi: **151 path**.
+
+## 15. Bukti Phase 6 (26 November 2026)
+
+Perintah dan hasil yang benar-benar dijalankan:
+
+| Perintah | Lingkup | Hasil |
+|---|---|---|
+| `cd backend && npm run typecheck` | Dua tsconfig | exit 0 |
+| `cd backend && npm test` | 40 test (37 lama + 3 baru) | 40 lulus, 0 gagal |
+| `cd android && ./gradlew testDebugUnitTest` | 16 unit test | 16 lulus, 0 gagal |
+| `cd android && ./gradlew assembleDebug` | APK debug | sukses |
+| `cd admin && npm run build` | Next.js | sukses |
+| `npm audit --omit=dev` (backend, admin) | Dependensi produksi | 0 kerentanan |
+| GitHub Actions CI #3 pada `main` | backend + admin | sukses |
+
+Test regresi baru di `backend/src/test/phase6.test.ts`:
+
+- `login lockout counts failures per account, not per address` — 9 kegagalan → 401, ke-10 → 429 `LOGIN_LOCKED`, kata sandi benar tetap ditolak selama kunci aktif, dan login sukses menghapus penghitung.
+- `password reset token is single-use even when two confirmations race` — dua konfirmasi paralel menghasilkan tepat satu 204 dan satu 401; pemakaian ulang ditolak; sesi lama dicabut.
+- `malformed or unknown route ids answer 400/404 instead of a database error` — `INVALID_ID` untuk id non-UUID, 404 untuk UUID yang tidak ada.
+
+Test Android baru: `ChatMergeTest` (2 kasus) memastikan penggabungan halaman tidak menggandakan pesan dan hasilnya terurut.
+
+Yang **tidak** dijalankan: instrumented test, emulator, perangkat fisik, uji media terhadap S3/MinIO, uji Redis/LiveKit nyata, load test staging, dan uji Play Billing.

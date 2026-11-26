@@ -54,12 +54,14 @@ export class AuthController {
 
   @Post('password/reset/confirm')
   @HttpCode(204)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async confirmReset(@Body() dto: ResetConfirmDto): Promise<void> {
     await this.auth.confirmPasswordReset(dto.token, dto.newPassword);
   }
 
   @Post('email/verify')
   @HttpCode(200)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   verifyEmail(@Body() dto: TokenDto) {
     return this.auth.verifyEmail(dto.token);
   }

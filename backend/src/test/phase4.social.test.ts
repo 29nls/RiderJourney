@@ -34,7 +34,7 @@ before(async () => {
   const applied = await runMigrations(db);
   assert.deepEqual(applied, [
     '0001_init.sql', '0002_convoys.sql', '0003_phase3.sql',
-    '0004_phase4.sql', '0005_community.sql', '0006_phase4_social.sql', '0007_phase5.sql', '0008_phase1.sql',
+    '0004_phase4.sql', '0005_community.sql', '0006_phase4_social.sql', '0007_phase5.sql', '0008_phase1.sql', '0009_phase6.sql',
   ]);
   const built = await buildTestApp(db);
   app = built.app;

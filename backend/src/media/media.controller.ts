@@ -15,6 +15,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { AuthGuard } from '../auth/auth.guard.js';
+import { UuidParamPipe } from '../common/uuid.pipe.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { UserRow } from '../auth/auth.types.js';
 import { CompleteUploadDto, CreateUploadDto } from './media.dto.js';
@@ -35,7 +36,7 @@ export class MediaAccessController {
 
   @Get(':id/access')
   access(
-    @Param('id') id: string,
+    @Param('id', UuidParamPipe) id: string,
     @Query('expires') expires: string,
     @Query('signature') signature: string,
     @Res({ passthrough: true }) res: Response,
@@ -62,7 +63,7 @@ export class MediaController {
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: SNIFF_LIMIT } }))
   complete(
     @CurrentUser() user: UserRow,
-    @Param('id') id: string,
+    @Param('id', UuidParamPipe) id: string,
     @Body() dto: CompleteUploadDto,
     @UploadedFile() file?: { buffer?: Buffer; size?: number },
   ) {
@@ -74,7 +75,7 @@ export class MediaController {
 
   /** Mints a short-lived signed GET for a viewer who may see this media. */
   @Get(':id/url')
-  signed(@CurrentUser() user: UserRow, @Param('id') id: string) {
+  signed(@CurrentUser() user: UserRow, @Param('id', UuidParamPipe) id: string) {
     return this.media.signGet(user.id, id);
   }
 }
