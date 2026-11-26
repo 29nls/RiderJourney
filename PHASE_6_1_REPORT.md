@@ -172,7 +172,7 @@ Job baru `media-integration` di `.github/workflows/ci.yml`:
 - tunggu sampai port menjawab 403 (auth aktif),
 - `npm run test:media` dengan env `MEDIA_S3_*`.
 
-Status run CI terakhir untuk commit ini dicatat di bagian akhir laporan setelah push. Job ini belum pernah dijalankan sebelumnya.
+Hasil: **CI run #6 (`8e04f0c`) selesai sukses untuk keempat job** — `backend`, `admin`, `android`, dan `media-integration`. Job `media-integration` menyalakan SeaweedFS di runner, menunggu port 8333 menjawab 403, lalu menjalankan 11 uji integrasi; tidak ada kegagalan. Karena MinIO tidak tersedia, job ini menjalankan uji S3-compatible, bukan MinIO.
 
 ## 12. Security findings
 
@@ -260,7 +260,7 @@ Tidak ada kolom yang dihapus dan tidak ada data yang diubah. Semua test bootstra
 | Missing object deletion is handled | PASS | `done` |
 | Account media purge is validated | PASS | Outbox → worker → `HEAD` null |
 | MinIO integration tests pass | BLOCKED | Diganti SeaweedFS; lihat bagian 9 |
-| GitHub Actions executes MinIO tests | BLOCKED | Job menjalankan uji S3-compatible, bukan MinIO; hasil dicatat di bagian 11 |
+| GitHub Actions executes MinIO tests | BLOCKED | Job `media-integration` hijau di run #6, tetapi menjalankan SeaweedFS, bukan MinIO |
 | Existing backend tests remain green | PASS | 40 lulus, 0 gagal |
 | Documentation reflects actual behavior | PASS | README + 6 dokumen diperbarui |
 | AWS production integration verified | BLOCKED | Tidak ada akun/bucket AWS |
