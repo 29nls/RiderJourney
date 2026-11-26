@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { v7 as uuidv7 } from 'uuid';
 import { DATABASE, type Database } from '../db/database.js';
+import { enqueueMediaDeletion } from '../media/deletion-outbox.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import type { ReportContentDto, UpdateProfileDto } from './social.dto.js';
 
@@ -368,6 +369,7 @@ export class SocialService {
       const posts = await tx.query<{ id: string }>(`DELETE FROM posts WHERE author_id = $1 RETURNING id`, [userId]);
       const albums = await tx.query<{ id: string }>(`DELETE FROM albums WHERE owner_id = $1 RETURNING id`, [userId]);
       const assets = await tx.query<{ id: string }>(`DELETE FROM media_assets WHERE owner_id = $1 RETURNING id`, [userId]);
+      await enqueueMediaDeletion(tx, media.map((row) => row.object_key), 'social_purge');
       const notifications = await tx.query<{ id: string }>(`DELETE FROM notifications WHERE user_id = $1 RETURNING id`, [userId]);
       await tx.query(`DELETE FROM push_devices WHERE user_id = $1`, [userId]);
       await tx.query(`DELETE FROM point_ledger WHERE user_id = $1`, [userId]);

@@ -177,7 +177,7 @@ before(async () => {
   process.env.CONVOY_CAPACITY_MAX = '30';
   db = await PGliteDatabase.create();
   const applied = await runMigrations(db);
-  assert.deepEqual(applied, ['0001_init.sql', '0002_convoys.sql', '0003_phase3.sql', '0004_phase4.sql', '0005_community.sql', '0006_phase4_social.sql', '0007_phase5.sql', '0008_phase1.sql', '0009_phase6.sql']);
+  assert.deepEqual(applied, ['0001_init.sql', '0002_convoys.sql', '0003_phase3.sql', '0004_phase4.sql', '0005_community.sql', '0006_phase4_social.sql', '0007_phase5.sql', '0008_phase1.sql', '0009_phase6.sql', '0010_phase6_1.sql']);
   const built = await buildTestApp(db, new SwitchableRoutingProvider(), new StubGeocodingProvider());
   app = built.app;
   tokens = app.get(TokenService);

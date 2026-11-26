@@ -6,7 +6,8 @@ import { PGliteDatabase } from './pglite.database.js';
 import { runMigrations } from '../db/migrate.js';
 import { buildTestApp } from './app.factory.js';
 import { MediaService } from '../media/media.service.js';
-import { auth, registerUser, uploadImage, type TestApi } from './phase4.helpers.js';
+import { auth, jpegBody, registerUser, sha256Hex, uploadImage, type TestApi } from './phase4.helpers.js';
+import { testStorage } from './fake-storage.js';
 
 let db: PGliteDatabase;
 let app: INestApplication;
@@ -32,7 +33,7 @@ before(async () => {
   const applied = await runMigrations(db);
   assert.deepEqual(applied, [
     '0001_init.sql', '0002_convoys.sql', '0003_phase3.sql',
-    '0004_phase4.sql', '0005_community.sql', '0006_phase4_social.sql', '0007_phase5.sql', '0008_phase1.sql', '0009_phase6.sql',
+    '0004_phase4.sql', '0005_community.sql', '0006_phase4_social.sql', '0007_phase5.sql', '0008_phase1.sql', '0009_phase6.sql', '0010_phase6_1.sql',
   ]);
   const built = await buildTestApp(db);
   app = built.app;
@@ -47,53 +48,85 @@ after(async () => {
   await db.close();
 });
 
-test('upload validation rejects size, type, and content mismatch', async () => {
+test('upload validation rejects size, type, and unverifiable content', async () => {
+  const jpeg = jpegBody(1024);
+  const checksum = sha256Hex(jpeg);
   const tooLarge = await api.post('/v1/media/uploads').set(auth(A.token)).send({
-    purpose: 'post_photo', contentType: 'image/jpeg', sizeBytes: 5_242_881, clientMediaId: 'too_large_0001',
+    purpose: 'post_photo', contentType: 'image/jpeg', sizeBytes: 5_242_881, clientMediaId: 'too_large_0001', checksumSha256: checksum,
   });
   assert.equal(tooLarge.status, 422);
   assert.equal(tooLarge.body.code, 'MEDIA_TOO_LARGE');
 
+  const noChecksum = await api.post('/v1/media/uploads').set(auth(A.token)).send({
+    purpose: 'post_photo', contentType: 'image/jpeg', sizeBytes: 1024, clientMediaId: 'no_checksum_0001',
+  });
+  assert.equal(noChecksum.status, 422);
+
   const photoWithVideo = await api.post('/v1/media/uploads').set(auth(A.token)).send({
-    purpose: 'post_photo', contentType: 'video/mp4', sizeBytes: 1024, clientMediaId: 'wrong_type_0001',
+    purpose: 'post_photo', contentType: 'video/mp4', sizeBytes: 1024, clientMediaId: 'wrong_type_0001', checksumSha256: checksum,
   });
   assert.equal(photoWithVideo.status, 422);
   assert.equal(photoWithVideo.body.code, 'MEDIA_TYPE_UNSUPPORTED');
 
   const videoWithPhoto = await api.post('/v1/media/uploads').set(auth(A.token)).send({
-    purpose: 'post_video', contentType: 'image/jpeg', sizeBytes: 1024, clientMediaId: 'wrong_type_0002',
+    purpose: 'post_video', contentType: 'image/jpeg', sizeBytes: 1024, clientMediaId: 'wrong_type_0002', checksumSha256: checksum,
   });
   assert.equal(videoWithPhoto.status, 422);
 
   const retryId = 'retry_intent_0001';
   const first = await api.post('/v1/media/uploads').set(auth(A.token)).send({
-    purpose: 'post_photo', contentType: 'image/jpeg', sizeBytes: 1024, clientMediaId: retryId,
+    purpose: 'post_photo', contentType: 'image/jpeg', sizeBytes: jpeg.length, clientMediaId: retryId, checksumSha256: checksum,
   });
   assert.equal(first.status, 201);
   const second = await api.post('/v1/media/uploads').set(auth(A.token)).send({
-    purpose: 'post_photo', contentType: 'image/jpeg', sizeBytes: 1024, clientMediaId: retryId,
+    purpose: 'post_photo', contentType: 'image/jpeg', sizeBytes: jpeg.length, clientMediaId: retryId, checksumSha256: checksum,
   });
   assert.equal(second.status, 201);
   assert.equal(second.body.id, first.body.id);
   assert.ok(second.body.uploadUrl);
+  const key = (url: string) => new URL(url).pathname.replace(/^\//, '');
 
-  const mismatch = await api
-    .post(`/v1/media/uploads/${first.body.id}/complete`)
-    .set(auth(A.token))
-    .field('sizeBytes', String(PNG_HEAD.length))
-    .attach('file', PNG_HEAD, { filename: 'fake.jpg', contentType: 'image/jpeg' });
+  // Magic bytes disagree with the declared JPEG type, even though size and
+  // checksum match: the server must reject it.
+  const png = Buffer.concat([PNG_HEAD, Buffer.alloc(8)]);
+  const mismatchIntent = await api.post('/v1/media/uploads').set(auth(A.token)).send({
+    purpose: 'post_photo', contentType: 'image/jpeg', sizeBytes: png.length, clientMediaId: 'mismatch_0001', checksumSha256: sha256Hex(png),
+  });
+  assert.equal(mismatchIntent.status, 201, JSON.stringify(mismatchIntent.body));
+  testStorage.put(key(mismatchIntent.body.uploadUrl), png, 'image/jpeg');
+  const mismatch = await api.post(`/v1/media/uploads/${mismatchIntent.body.id}/complete`).set(auth(A.token));
   assert.equal(mismatch.status, 409, JSON.stringify(mismatch.body));
   assert.equal(mismatch.body.code, 'MEDIA_CONTENT_MISMATCH');
 
+  // Same length, different bytes: the stored SHA-256 no longer matches.
+  const tampered = Buffer.from(jpeg);
+  tampered[20] = tampered[20] ^ 0xff;
+  const checksumIntent = await api.post('/v1/media/uploads').set(auth(A.token)).send({
+    purpose: 'post_photo', contentType: 'image/jpeg', sizeBytes: jpeg.length, clientMediaId: 'checksum_0001', checksumSha256: checksum,
+  });
+  assert.equal(checksumIntent.status, 201, JSON.stringify(checksumIntent.body));
+  testStorage.put(key(checksumIntent.body.uploadUrl), tampered, 'image/jpeg');
+  const checksumMismatch = await api.post(`/v1/media/uploads/${checksumIntent.body.id}/complete`).set(auth(A.token));
+  assert.equal(checksumMismatch.status, 409, JSON.stringify(checksumMismatch.body));
+  assert.equal(checksumMismatch.body.code, 'MEDIA_CHECKSUM_MISMATCH');
+
+  // HEAD length is authoritative; the declared size is never trusted.
+  const shortIntent = await api.post('/v1/media/uploads').set(auth(A.token)).send({
+    purpose: 'post_photo', contentType: 'image/jpeg', sizeBytes: jpeg.length, clientMediaId: 'short_0001', checksumSha256: checksum,
+  });
+  assert.equal(shortIntent.status, 201, JSON.stringify(shortIntent.body));
+  testStorage.put(key(shortIntent.body.uploadUrl), jpeg.subarray(0, jpeg.length - 1), 'image/jpeg');
+  const short = await api.post(`/v1/media/uploads/${shortIntent.body.id}/complete`).set(auth(A.token));
+  assert.equal(short.status, 409, JSON.stringify(short.body));
+  assert.equal(short.body.code, 'MEDIA_SIZE_MISMATCH');
+
+  const mp4 = Buffer.concat([MP4_HEAD, Buffer.alloc(4)]);
   const video = await api.post('/v1/media/uploads').set(auth(A.token)).send({
-    purpose: 'post_video', contentType: 'video/mp4', sizeBytes: 4096, clientMediaId: 'video_clip_0001',
+    purpose: 'post_video', contentType: 'video/mp4', sizeBytes: mp4.length, clientMediaId: 'video_clip_0001', checksumSha256: sha256Hex(mp4),
   });
   assert.equal(video.status, 201, JSON.stringify(video.body));
-  const completeVideo = await api
-    .post(`/v1/media/uploads/${video.body.id}/complete`)
-    .set(auth(A.token))
-    .field('sizeBytes', String(MP4_HEAD.length))
-    .attach('file', MP4_HEAD, { filename: 'clip.mp4', contentType: 'video/mp4' });
+  testStorage.put(key(video.body.uploadUrl), mp4, 'video/mp4');
+  const completeVideo = await api.post(`/v1/media/uploads/${video.body.id}/complete`).set(auth(A.token));
   assert.equal(completeVideo.status, 200, JSON.stringify(completeVideo.body));
   assert.equal(completeVideo.body.status, 'ready');
 });

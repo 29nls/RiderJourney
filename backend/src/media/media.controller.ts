@@ -1,34 +1,17 @@
-import {
-  BadRequestException,
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  Param,
-  Post,
-  Query,
-  Res,
-  UploadedFile,
-  UseGuards,
-  UseInterceptors,
-} from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { Body, Controller, Get, HttpCode, Param, Post, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { UuidParamPipe } from '../common/uuid.pipe.js';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { UserRow } from '../auth/auth.types.js';
-import { CompleteUploadDto, CreateUploadDto } from './media.dto.js';
+import { CreateUploadDto } from './media.dto.js';
 import { MediaService } from './media.service.js';
-
-// Only the header is needed to check the magic bytes; the object itself is
-// streamed to storage, so this endpoint refuses anything larger.
-const SNIFF_LIMIT = 1024;
 
 /**
  * Signed GET is intentionally unauthenticated: the signature is the capability.
  * It is scoped to one media id and one expiry, so it cannot be replayed against
- * another object or after it lapses.
+ * another object or after it lapses. The response includes a short-lived
+ * presigned storage URL; the bucket itself is never public.
  */
 @Controller('v1/media')
 export class MediaAccessController {
@@ -58,19 +41,14 @@ export class MediaController {
     return this.media.createIntent(user.id, dto);
   }
 
+  /**
+   * No body: size, type, and checksum come from the object the server reads
+   * back, not from fields the client could lie about.
+   */
   @Post('uploads/:id/complete')
   @HttpCode(200)
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: SNIFF_LIMIT } }))
-  complete(
-    @CurrentUser() user: UserRow,
-    @Param('id', UuidParamPipe) id: string,
-    @Body() dto: CompleteUploadDto,
-    @UploadedFile() file?: { buffer?: Buffer; size?: number },
-  ) {
-    if (!file?.buffer || file.buffer.length < 8) {
-      throw new BadRequestException({ code: 'MEDIA_BODY_REQUIRED', title: 'Isi media wajib dikirim', detail: 'Sertakan potongan awal file minimal 8 byte.' });
-    }
-    return this.media.complete(user.id, id, dto.sizeBytes, file.buffer);
+  complete(@CurrentUser() user: UserRow, @Param('id', UuidParamPipe) id: string) {
+    return this.media.complete(user.id, id);
   }
 
   /** Mints a short-lived signed GET for a viewer who may see this media. */

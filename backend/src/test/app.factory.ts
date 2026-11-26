@@ -4,6 +4,8 @@ import { AppModule } from '../app.module.js';
 import { APP_CONFIG, loadConfig, type AppConfig } from '../config/env.js';
 import { configureApp } from '../app.setup.js';
 import { DATABASE, type Database } from '../db/database.js';
+import { OBJECT_STORAGE, type ObjectStorage } from '../media/object-storage.js';
+import { testStorage } from './fake-storage.js';
 import { PURCHASE_VERIFIER, type PurchaseVerifier } from '../billing/billing.types.js';
 import {
   GEOCODING_PROVIDER,
@@ -50,8 +52,8 @@ export async function buildTestApp(
   db: Database,
   routing = new SwitchableRoutingProvider(),
   geocoding = new StubGeocodingProvider(),
-  options: { verifier?: PurchaseVerifier; env?: Record<string, string> } = {},
-): Promise<{ app: INestApplication; config: AppConfig; routing: SwitchableRoutingProvider }> {
+  options: { verifier?: PurchaseVerifier; env?: Record<string, string>; realStorage?: boolean } = {},
+): Promise<{ app: INestApplication; config: AppConfig; routing: SwitchableRoutingProvider; storage: ObjectStorage }> {
   process.env.AUTH_JWT_SECRET = process.env.AUTH_JWT_SECRET ?? 'test-secret-with-at-least-32-characters';
   process.env.AUTH_EXPOSE_DEV_TOKENS = 'true';
   process.env.PLATE_ENCRYPTION_KEY = process.env.PLATE_ENCRYPTION_KEY ?? Buffer.alloc(32, 7).toString('base64');
@@ -67,11 +69,16 @@ export async function buildTestApp(
   if (options.verifier) {
     builder = builder.overrideProvider(PURCHASE_VERIFIER).useValue(options.verifier);
   }
+  // Unit tests get an in-memory double; only the integration suite exercises
+  // the real SigV4 client against an S3-compatible server.
+  if (!options.realStorage) {
+    builder = builder.overrideProvider(OBJECT_STORAGE).useValue(testStorage);
+  }
   const moduleRef = await builder.compile();
 
   const app = moduleRef.createNestApplication();
   const config = app.get<AppConfig>(APP_CONFIG);
   configureApp(app, config);
   await app.init();
-  return { app, config, routing };
+  return { app, config, routing, storage: app.get<ObjectStorage>(OBJECT_STORAGE) };
 }

@@ -48,6 +48,31 @@ cd android
 
 Build Android memerlukan `JAVA_HOME` ke JDK 21; Gradle 8.13 menolak JDK 25.
 
+## Penyimpanan media
+
+Media memakai bucket S3 privat dengan presigned SigV4. Variabel yang dibutuhkan:
+
+```
+MEDIA_S3_ENDPOINT=https://s3.example.com   # kosongkan untuk AWS default
+MEDIA_S3_BUCKET=riderjourney-media
+MEDIA_S3_REGION=us-east-1
+MEDIA_S3_ACCESS_KEY=...
+MEDIA_S3_SECRET_KEY=...
+MEDIA_S3_FORCE_PATH_STYLE=true             # MinIO/S3-compatible; false untuk virtual-hosted AWS
+MEDIA_UPLOAD_TTL_SECONDS=300
+MEDIA_DELETION_MAX_ATTEMPTS=5
+MEDIA_DELETION_BACKOFF_SECONDS=30
+```
+
+Bucket harus privat. Worker penghapusan objek dijalankan dengan `npm run media:purge` (status) atau `npm run media:purge -- --run`.
+
+Untuk menjalankan uji integrasi storage di lokal, nyalakan server S3-compatible sungguhan (lihat `PHASE_6_1_REPORT.md`; MinIO open-source tidak lagi didistribusikan), lalu:
+
+```bash
+cd backend
+MEDIA_S3_INTEGRATION=1 MEDIA_S3_ENDPOINT=http://127.0.0.1:8333 MEDIA_S3_BUCKET=rj-media-it MEDIA_S3_ACCESS_KEY=... MEDIA_S3_SECRET_KEY=... npm run test:media
+```
+
 ## Konfigurasi
 
 Semua konfigurasi backend dibaca dari environment, tidak ada secret di repository. Variabel yang wajib untuk menjalankan API: `DATABASE_URL`, `AUTH_JWT_SECRET`, `PLATE_ENCRYPTION_KEY` (32 byte base64). Fitur opsional tetap mati sampai dikonfigurasi: `BILLING_ENABLED`, `PAID_FEATURES_ENABLED`, `MEDIA_S3_*`, `REDIS_URL`, `LIVEKIT_*`.

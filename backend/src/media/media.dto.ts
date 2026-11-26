@@ -1,5 +1,4 @@
-import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, IsString, Length, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsString, Length, Matches, Max, Min } from 'class-validator';
 
 export const MEDIA_PURPOSES = [
   'hazard_photo', 'community_logo', 'community_cover', 'avatar',
@@ -26,21 +25,11 @@ export class CreateUploadDto {
   @Length(8, 80)
   clientMediaId!: string;
 
-  @IsOptional()
-  @IsString()
-  checksumSha256?: string;
-}
-
-export class CompleteUploadDto {
-  // Multipart fields arrive as strings; coercion keeps the same integer bound.
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(104_857_600)
-  sizeBytes!: number;
-
-  @IsOptional()
-  @IsString()
-  @Length(0, 200)
-  originalName?: string;
+  /**
+   * Hex SHA-256 of the bytes the client intends to upload. Required: completion
+   * compares this with a digest the server computes from the stored object, so
+   * neither the size nor the content is taken on trust.
+   */
+  @Matches(/^[0-9a-fA-F]{64}$/, { message: 'checksumSha256 must be 64 hex characters' })
+  checksumSha256!: string;
 }

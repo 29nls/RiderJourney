@@ -61,3 +61,45 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - run: chmod +x gradlew
       - run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
+
+  media-integration:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      # MinIO's open-source server is archived and no longer distributed
+      # (dl.min.io returns 410, the Docker Hub repository is gone), so the
+      # suite runs against a real SeaweedFS S3 gateway. See PHASE_6_1_REPORT.md.
+      - name: Start S3-compatible storage
+        run: |
+          curl -fsSL -o /tmp/seaweedfs.tar.gz https://github.com/seaweedfs/seaweedfs/releases/download/4.55/linux_amd64.tar.gz
+          mkdir -p /tmp/seaweedfs /tmp/seaweed-data
+          tar -xzf /tmp/seaweedfs.tar.gz -C /tmp/seaweedfs
+          cat > /tmp/seaweed-s3.json <<'JSON'
+          {"identities":[{"name":"ci","credentials":[{"accessKey":"ciaccess","secretKey":"cisecret123"}],"actions":["Admin","Read","Write","List","Tagging"]}]}
+          JSON
+          nohup /tmp/seaweedfs/weed server -dir=/tmp/seaweed-data -s3 -s3.port=8333 -s3.config=/tmp/seaweed-s3.json -volume.max=50 > /tmp/seaweed.log 2>&1 &
+          for i in $(seq 1 40); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8333/ || true)
+            if [ "$code" = "403" ]; then exit 0; fi
+            sleep 2
+          done
+          tail -40 /tmp/seaweed.log
+          exit 1
+      - run: npm run test:media
+        env:
+          MEDIA_S3_INTEGRATION: "1"
+          MEDIA_S3_ENDPOINT: http://127.0.0.1:8333
+          MEDIA_S3_BUCKET: rj-media-it
+          MEDIA_S3_REGION: us-east-1
+          MEDIA_S3_ACCESS_KEY: ciaccess
+          MEDIA_S3_SECRET_KEY: cisecret123
+          MEDIA_S3_FORCE_PATH_STYLE: "true"

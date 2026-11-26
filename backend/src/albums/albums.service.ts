@@ -5,6 +5,7 @@ import {
 import { v7 as uuidv7 } from 'uuid';
 import { DATABASE, type Database } from '../db/database.js';
 import { PlanService } from '../entitlements/plan.service.js';
+import { enqueueMediaDeletion } from '../media/deletion-outbox.js';
 import { audienceAllowed } from '../social/audience.sql.js';
 import { communityPermission } from '../social/community-permissions.js';
 import type {
@@ -30,6 +31,7 @@ type AlbumRow = {
 type AlbumMediaRow = {
   id: string;
   owner_id: string;
+  object_key: string;
   mime_type: string;
   size_bytes: number;
   status: string;
@@ -300,6 +302,7 @@ export class AlbumsService {
         `UPDATE media_assets SET status = 'deleted', album_id = NULL, sort_index = 0 WHERE id = $1`,
         [mediaId],
       );
+      await enqueueMediaDeletion(tx, [media.object_key], 'album_media_removed');
       await tx.query(
         `UPDATE albums SET used_bytes = GREATEST(0, used_bytes - $2), updated_at = now() WHERE id = $1`,
         [albumId, media.size_bytes],
@@ -322,6 +325,7 @@ export class AlbumsService {
         [albumId],
       );
       await tx.query(`UPDATE media_assets SET status = 'deleted', album_id = NULL, sort_index = 0 WHERE album_id = $1`, [albumId]);
+      await enqueueMediaDeletion(tx, media.map((row) => row.object_key), 'album_deleted');
       await tx.query(`UPDATE albums SET deleted_at = now(), used_bytes = 0, updated_at = now() WHERE id = $1`, [albumId]);
       return { id: albumId, deleted: true, mediaCount: media.length, objectKeys: media.map((row) => row.object_key) };
     });

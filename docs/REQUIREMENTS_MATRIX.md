@@ -188,7 +188,7 @@ Eksekusi Phase 2 dibatasi pada CNV-01…CNV-08. Requirement Phase 2 lain di PRD 
 
 Verifikasi Phase 2: `cd backend && npm test` → 10/10 lulus; Android `:app:testDebugUnitTest :app:assembleDebug` → BUILD SUCCESSFUL (14 unit test lama, tidak ada unit test konvoi baru); OpenAPI 50 path. Redis nyata, multi-instance fanout, dan UI perangkat belum diuji. Rincian ada di `PHASE_2_REPORT.md`.
 
-## 8. Status implementasi Phase 6 (26 November 2026)
+## 9. Status implementasi Phase 6 (26 November 2026)
 
 Bagian ini menambahkan status aktual setelah Phase 6. Tabel 1–3 tetap historis dan tidak diubah.
 
@@ -204,3 +204,14 @@ Bagian ini menambahkan status aktual setelah Phase 6. Tabel 1–3 tetap historis
 | MAP-05 | Sebagian | Endpoint favorit ada di backend; Android belum memakai |
 
 Android yang belum memiliki layar sama sekali pada Phase 6: consent/privasi, permintaan penghapusan akun, unggah media, tempat favorit.
+
+## 10. Status media Phase 6.1 (26 November 2026)
+
+| ID | Status | Bukti / catatan |
+|---|---|---|
+| Unggah media backend | PASS (S3-compatible) | SigV4, HEAD, SHA-256, magic bytes, idempotensi; 11 uji integrasi |
+| Penghapusan objek | PASS (S3-compatible) | Outbox + worker + verifikasi `HEAD`; uji penghapusan akun |
+| Unggah dari Android | FAIL | Belum ada layar/klien unggah; kontrak baru belum dipakai |
+| Verifikasi AWS produksi | BLOCKED | Tidak ada akun/bucket AWS; hanya S3-compatible yang diuji |
+| MinIO sebagai target uji | BLOCKED | MinIO open-source diarsipkan, unduhan 410 |
+| Intent `pending` yang ditinggalkan | FAIL | Belum ada lifecycle/TTL objek yatim |

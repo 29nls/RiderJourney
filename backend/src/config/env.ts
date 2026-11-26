@@ -42,7 +42,10 @@ export type AppConfig = {
   mediaS3Region: string;
   mediaS3AccessKey: string;
   mediaS3SecretKey: string;
+  mediaS3ForcePathStyle: boolean;
   mediaUploadTtlSeconds: number;
+  mediaDeletionMaxAttempts: number;
+  mediaDeletionBackoffSeconds: number;
   mediaMaxBytes: number;
   mediaMaxVideoBytes: number;
   mediaSignedUrlTtlSeconds: number;
@@ -155,7 +158,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     mediaS3Region: env.MEDIA_S3_REGION ?? 'auto',
     mediaS3AccessKey: env.MEDIA_S3_ACCESS_KEY ?? '',
     mediaS3SecretKey: env.MEDIA_S3_SECRET_KEY ?? '',
+    // Path style is what MinIO and most S3-compatible servers require; AWS can
+    // switch this off when it needs virtual-hosted buckets.
+    mediaS3ForcePathStyle: bool(env.MEDIA_S3_FORCE_PATH_STYLE, true),
     mediaUploadTtlSeconds: int(env.MEDIA_UPLOAD_TTL_SECONDS, 300),
+    mediaDeletionMaxAttempts: int(env.MEDIA_DELETION_MAX_ATTEMPTS, 5),
+    mediaDeletionBackoffSeconds: int(env.MEDIA_DELETION_BACKOFF_SECONDS, 30),
     mediaMaxBytes: int(env.MEDIA_MAX_BYTES, 5_242_880),
     mediaMaxVideoBytes: int(env.MEDIA_MAX_VIDEO_BYTES, 104_857_600),
     // Signed URLs for private media expire on their own; nothing long-lived is stored.

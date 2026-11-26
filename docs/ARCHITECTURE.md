@@ -339,3 +339,19 @@ Detail kontrak: `API_CONTRACT.md`, `REALTIME_EVENTS.md`, `DATA_MODEL.md`, `SECUR
 - **Belum termasuk.** Chat, voice/PTT, hazard, billing, push notification konvoi, deep link undangan di Android, dan dashboard admin belum diimplementasikan pada Phase 2.
 
 Laporan bukti dan batasan: `PHASE_2_REPORT.md`.
+
+## 16. Penyimpanan media (Phase 6.1)
+
+Bucket bersifat privat. API tidak pernah meneruskan kredensial storage ke klien; klien hanya menerima URL SigV4 berumur pendek.
+
+Alur unggah:
+
+1. `POST /v1/media/uploads` memvalidasi tujuan, tipe, ukuran, dan checksum SHA-256, lalu membuat baris `media_assets` berstatus `pending` dengan key `media/{ownerId}/{mediaId}.{ext}` yang seluruhnya dibuat server.
+2. Server menandatangani `PutObject` dengan AWS SDK v3 (`@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner`), menyertakan header `content-type` dan `if-none-match: *` di `X-Amz-SignedHeaders`, dan mengembalikan URL plus daftar header wajib.
+3. Klien melakukan `PUT` langsung ke storage. Signature menolak tipe konten yang berbeda dan menolak menimpa objek yang sudah ada (412).
+4. `POST /v1/media/uploads/{id}/complete` tidak menerima ukuran atau tipe dari klien. Server melakukan `HEAD` (keberadaan, `ContentLength`, `ContentType`), lalu membaca objek sebagai stream untuk menghitung SHA-256 dan memeriksa magic bytes. Baru setelah semuanya cocok, baris diubah menjadi `ready` dalam satu `UPDATE ... WHERE status = 'pending'` sehingga penyelesaian ganda idempoten.
+5. `GET /v1/media/{id}/url` mengembalikan URL aplikasi bertanda tangan; `GET /v1/media/{id}/access` memverifikasi tanda tangan itu dan mengembalikan `downloadUrl` SigV4 berumur 60 detik.
+
+Penghapusan memakai transactional outbox `media_deletion_outbox`. Transaksi yang menghapus metadata (akun, purge sosial, hapus album) juga memasukkan setiap `object_key`. Worker mengambil baris dengan `FOR UPDATE SKIP LOCKED`, menghapus objek, lalu memverifikasi dengan `HEAD` bahwa objek benar-benar tidak ada. Kegagalan dicatat dengan `attempts`, `last_error`, dan backoff eksponensial; setelah batas percobaan baris menjadi `failed` (dead-letter).
+
+Adapter storage ada di `backend/src/media/object-storage.ts`; verifikasi di `media.service.ts`; outbox dan worker di `media/deletion-outbox.ts`.

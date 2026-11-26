@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  GoneException,
   HttpException,
   HttpStatus,
   Inject,
@@ -9,12 +10,13 @@ import {
   UnauthorizedException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { v7 as uuidv7 } from 'uuid';
 import { APP_CONFIG, type AppConfig } from '../config/env.js';
 import { DATABASE, type Database } from '../db/database.js';
 import { REALTIME_STORE, type RealtimeStore } from '../realtime/realtime.store.js';
 import { type CreateUploadDto, IMAGE_TYPES, VIDEO_TYPES } from './media.dto.js';
+import { OBJECT_STORAGE, type ObjectStorage } from './object-storage.js';
 
 const ALLOWED: Record<string, string> = {
   'image/jpeg': 'jpg',
@@ -52,10 +54,14 @@ export type MediaAssetRow = {
   taken_at: Date | null;
   caption: string | null;
   sort_index: number;
+  checksum_sha256?: string | null;
+  upload_expires_at?: Date | null;
 };
 
-function encode(value: string): string {
-  return encodeURIComponent(value);
+function magicMatches(mimeType: string, head: Buffer): boolean {
+  const magic = MAGIC[mimeType] ?? { offset: 0, bytes: [] };
+  const slice = head.subarray(magic.offset, magic.offset + magic.bytes.length);
+  return magic.bytes.length > 0 && magic.bytes.every((byte, index) => slice[index] === byte);
 }
 
 @Injectable()
@@ -64,6 +70,7 @@ export class MediaService {
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     @Inject(DATABASE) private readonly db: Database,
     @Inject(REALTIME_STORE) private readonly store: RealtimeStore,
+    @Inject(OBJECT_STORAGE) private readonly storage: ObjectStorage,
   ) {}
 
   private assertStorage(): void {
@@ -104,13 +111,19 @@ export class MediaService {
       throw new UnprocessableEntityException({ code: 'MEDIA_TYPE_UNSUPPORTED', title: 'Format media tidak didukung', detail: 'Gunakan JPEG, PNG, WebP, MP4, atau WebM.' });
     }
 
-    const existing = await this.db.query<{ id: string; object_key: string; status: string }>(
-      `SELECT id, object_key, status FROM media_assets WHERE owner_id = $1 AND client_media_id = $2`,
+    const existing = await this.db.query<{ id: string; object_key: string; mime_type: string; status: string; upload_expires_at: Date | null }>(
+      `SELECT id, object_key, mime_type, status, upload_expires_at FROM media_assets WHERE owner_id = $1 AND client_media_id = $2`,
       [userId, dto.clientMediaId],
     );
     if (existing[0]) {
       if (existing[0].status === 'pending') {
-        return this.sign(userId, existing[0].id, existing[0].object_key, dto.contentType);
+        // The key is fixed for this intent, so a retry only extends the window
+        // of the same presigned target instead of creating another object.
+        await this.db.query(
+          `UPDATE media_assets SET upload_expires_at = now() + ($2 || ' seconds')::interval WHERE id = $1`,
+          [existing[0].id, this.config.mediaUploadTtlSeconds],
+        );
+        return this.grant(existing[0].id, existing[0].object_key, existing[0].mime_type);
       }
       return { id: existing[0].id, status: existing[0].status, uploadUrl: null, duplicate: true };
     }
@@ -124,67 +137,114 @@ export class MediaService {
     }
 
     const id = uuidv7();
-    const objectKey = `media/${userId}/${dto.clientMediaId}.${ext}`;
+    // Key is fully server-generated: no client input reaches the path.
+    const objectKey = `media/${userId}/${id}.${ext}`;
     await this.db.query(
       `INSERT INTO media_assets (id, owner_id, purpose, mime_type, size_bytes, object_key, status, client_media_id, checksum_sha256, upload_expires_at)
        VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, now() + ($9 || ' seconds')::interval)`,
-      [id, userId, dto.purpose, dto.contentType, dto.sizeBytes, objectKey, dto.clientMediaId, dto.checksumSha256 ?? null, this.config.mediaUploadTtlSeconds],
+      [id, userId, dto.purpose, dto.contentType, dto.sizeBytes, objectKey, dto.clientMediaId, dto.checksumSha256.toLowerCase(), this.config.mediaUploadTtlSeconds],
     );
-    return this.sign(userId, id, objectKey, dto.contentType);
+    return this.grant(id, objectKey, dto.contentType);
   }
 
   /**
-   * Short-lived upload grant. The bucket is not public and no storage credentials
-   * reach the client: the token only lets this owner PUT one declared object.
+   * Short-lived upload grant. The bucket stays private and no storage
+   * credentials reach the client: the SigV4 URL lets this owner PUT one
+   * server-chosen key, with a matching content type, and cannot replace an
+   * object that already exists.
    */
-  public sign(userId: string, mediaId: string, objectKey: string, contentType: string) {
+  private async grant(mediaId: string, objectKey: string, contentType: string) {
     const expiresIn = this.config.mediaUploadTtlSeconds;
-    const now = new Date().toISOString();
-    const date = now.slice(0, 10).replace(/-/g, '');
-    const region = this.config.mediaS3Region || 'auto';
-    const endpoint = (this.config.mediaS3Endpoint || '').replace(/\/$/, '');
-    const url = endpoint ? `${endpoint}/${this.config.mediaS3Bucket}/${objectKey.split('/').map(encode).join('/')}` : '';
-    const credential = `${this.config.mediaS3AccessKey}/${date}/${region}/s3/aws4_request`;
-    const query = new URLSearchParams({
-      'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
-      'X-Amz-Credential': credential,
-      'X-Amz-Date': `${date}T000000Z`,
-      'X-Amz-Expires': String(expiresIn),
-      'X-Amz-SignedHeaders': 'content-type,host',
-      // One object key per upload intent: a retried PUT may not replace finished bytes.
-      'If-None-Match': '*',
-    });
-    const unsigned = `${url}?${query.toString()}`;
-    const signature = createHmac('sha256', this.config.mediaS3SecretKey).update(unsigned).digest('hex');
+    const uploadUrl = await this.storage.presignPut(objectKey, contentType, expiresIn);
     return {
       id: mediaId,
       status: 'pending',
-      uploadUrl: `${unsigned}&X-Amz-Signature=${signature}&X-Owner=${encode(userId)}`,
+      uploadUrl,
       method: 'PUT',
-      requiredHeaders: { 'Content-Type': contentType },
+      requiredHeaders: { 'Content-Type': contentType, 'If-None-Match': '*' },
       expiresIn,
       note: 'Putar ulang permintaan dengan clientMediaId yang sama agar URL yang kedaluwarsa diganti tanpa membuat baris ganda.',
     };
   }
 
-  async complete(userId: string, mediaId: string, byteLength: number, head: Buffer) {
+  private async reject(id: string, code: string, detail: string): Promise<never> {
+    await this.db.query(`UPDATE media_assets SET status = 'rejected' WHERE id = $1 AND status = 'pending'`, [id]);
+    throw new ConflictException({ code, title: 'Verifikasi media gagal', detail });
+  }
+
+  /**
+   * Completion trusts neither sizeBytes nor contentType from the request. The
+   * object is read back from storage: HEAD gives length and metadata, and a
+   * streamed SHA-256 plus magic-byte check proves the bytes.
+   */
+  async complete(userId: string, mediaId: string) {
     const rows = await this.db.query<MediaAssetRow>(
-      `SELECT id, owner_id, mime_type, size_bytes, status, purpose FROM media_assets WHERE id = $1 AND owner_id = $2`,
+      `SELECT id, owner_id, mime_type, size_bytes, object_key, status, purpose, checksum_sha256, upload_expires_at
+       FROM media_assets WHERE id = $1 AND owner_id = $2`,
       [mediaId, userId],
     );
     const asset = rows[0];
     if (!asset) throw new NotFoundException({ code: 'MEDIA_NOT_FOUND', title: 'Media tidak ditemukan', detail: 'Aset media tidak tersedia untuk akun ini.' });
     if (asset.status === 'ready') return { id: asset.id, status: 'ready', purpose: asset.purpose, duplicate: true };
-
-    const magic = MAGIC[asset.mime_type] ?? { offset: 0, bytes: [] };
-    const slice = head.subarray(magic.offset, magic.offset + magic.bytes.length);
-    const looksRight = magic.bytes.length > 0 && magic.bytes.every((byte, index) => slice[index] === byte);
-    const sizeAllowed = byteLength > 0 && byteLength <= Number(asset.size_bytes);
-    if (!looksRight || !sizeAllowed) {
-      await this.db.query(`UPDATE media_assets SET status = 'rejected' WHERE id = $1`, [asset.id]);
-      throw new ConflictException({ code: 'MEDIA_CONTENT_MISMATCH', title: 'Isi media tidak cocok', detail: 'File yang diunggah bukan media sesuai tipe dan ukuran yang dijanjikan.' });
+    if (asset.status !== 'pending') {
+      throw new ConflictException({ code: 'MEDIA_NOT_PENDING', title: 'Media tidak menunggu unggahan', detail: `Status aset: ${asset.status}.` });
     }
-    await this.db.query(`UPDATE media_assets SET status = 'ready', ready_at = now(), size_bytes = $2 WHERE id = $1`, [asset.id, byteLength]);
+    if (!asset.upload_expires_at || new Date(asset.upload_expires_at).getTime() <= Date.now()) {
+      throw new GoneException({ code: 'MEDIA_UPLOAD_EXPIRED', title: 'Unggahan kedaluwarsa', detail: 'Buat intent unggahan baru.' });
+    }
+    const expectedChecksum = (asset.checksum_sha256 ?? '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(expectedChecksum)) {
+      throw new ConflictException({ code: 'MEDIA_CHECKSUM_MISSING', title: 'Checksum tidak tersedia', detail: 'Intent lama tanpa checksum tidak dapat diselesaikan; buat intent baru.' });
+    }
+
+    const head = await this.storage.head(asset.object_key);
+    if (!head) {
+      throw new ConflictException({ code: 'MEDIA_OBJECT_MISSING', title: 'Objek belum diunggah', detail: 'Unggah file ke URL yang diberikan sebelum menyelesaikan.' });
+    }
+    if (head.contentLength !== asset.size_bytes) {
+      return this.reject(asset.id, 'MEDIA_SIZE_MISMATCH', `Ukuran objek ${head.contentLength} byte, diharapkan ${asset.size_bytes} byte.`);
+    }
+    const actualType = (head.contentType ?? '').split(';')[0].trim().toLowerCase();
+    if (actualType !== asset.mime_type) {
+      return this.reject(asset.id, 'MEDIA_CONTENT_MISMATCH', `Tipe objek ${actualType || 'tidak diketahui'}, diharapkan ${asset.mime_type}.`);
+    }
+
+    const digest = createHash('sha256');
+    let firstBytes = Buffer.alloc(0);
+    let read = 0;
+    const { stream } = await this.storage.openRead(asset.object_key);
+    for await (const chunk of stream) {
+      const bytes = Buffer.from(chunk);
+      read += bytes.length;
+      if (read > asset.size_bytes) {
+        return this.reject(asset.id, 'MEDIA_SIZE_MISMATCH', 'Objek lebih besar dari ukuran yang dijanjikan.');
+      }
+      digest.update(bytes);
+      if (firstBytes.length < 16) {
+        firstBytes = Buffer.concat([firstBytes, bytes.subarray(0, 16 - firstBytes.length)]);
+      }
+    }
+    if (read !== asset.size_bytes) {
+      return this.reject(asset.id, 'MEDIA_SIZE_MISMATCH', `Hanya ${read} byte yang terbaca, diharapkan ${asset.size_bytes} byte.`);
+    }
+    if (digest.digest('hex') !== expectedChecksum) {
+      return this.reject(asset.id, 'MEDIA_CHECKSUM_MISMATCH', 'SHA-256 objek tidak cocok dengan checksum yang dijanjikan.');
+    }
+    if (!magicMatches(asset.mime_type, firstBytes)) {
+      return this.reject(asset.id, 'MEDIA_CONTENT_MISMATCH', 'Isi file bukan media sesuai tipe yang dijanjikan.');
+    }
+
+    const updated = await this.db.query<{ id: string }>(
+      `UPDATE media_assets SET status = 'ready', ready_at = now(), size_bytes = $2
+       WHERE id = $1 AND status = 'pending' AND upload_expires_at > now()
+       RETURNING id`,
+      [asset.id, read],
+    );
+    if (!updated[0]) {
+      const current = await this.db.query<{ status: string }>(`SELECT status FROM media_assets WHERE id = $1`, [asset.id]);
+      if (current[0]?.status === 'ready') return { id: asset.id, status: 'ready', purpose: asset.purpose, duplicate: true };
+      throw new ConflictException({ code: 'MEDIA_NOT_PENDING', title: 'Media tidak dapat diselesaikan', detail: 'Status aset berubah selama verifikasi.' });
+    }
     return { id: asset.id, status: 'ready', purpose: asset.purpose };
   }
 
@@ -269,7 +329,16 @@ export class MediaService {
       [mediaId],
     );
     if (!rows[0]) throw new NotFoundException({ code: 'MEDIA_NOT_FOUND', title: 'Media tidak ditemukan', detail: 'Media tidak tersedia.' });
-    return { id: rows[0].id, mimeType: rows[0].mime_type, sizeBytes: rows[0].size_bytes, purpose: rows[0].purpose, expiresAt: new Date(expires * 1000).toISOString() };
+    const download = await this.storage.presignGet(rows[0].object_key, 60);
+    return {
+      id: rows[0].id,
+      mimeType: rows[0].mime_type,
+      sizeBytes: rows[0].size_bytes,
+      purpose: rows[0].purpose,
+      expiresAt: new Date(expires * 1000).toISOString(),
+      downloadUrl: download,
+      downloadExpiresIn: 60,
+    };
   }
 
   /** Purpose check used by posts, albums, and posters before they attach a row. */

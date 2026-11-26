@@ -241,3 +241,39 @@ Test regresi baru di `backend/src/test/phase6.test.ts`:
 Test Android baru: `ChatMergeTest` (2 kasus) memastikan penggabungan halaman tidak menggandakan pesan dan hasilnya terurut.
 
 Yang **tidak** dijalankan: instrumented test, emulator, perangkat fisik, uji media terhadap S3/MinIO, uji Redis/LiveKit nyata, load test staging, dan uji Play Billing.
+
+## 16. Bukti Phase 6.1 — media storage (26 November 2026)
+
+Unit dan regresi (`cd backend && npm test`):
+
+- **51 test**: 40 lulus, 0 gagal, 11 di-skip (berkas integrasi storage, butuh server nyata).
+- Migrasi `0010_phase6_1.sql` ikut terverifikasi pada setiap bootstrap PGlite.
+
+Integrasi storage (`npm run test:media` dengan server S3-compatible nyata):
+
+| Kasus | Hasil |
+|---|---|
+| Presigned SigV4 + `HEAD` membuat media `ready` | lulus |
+| Signature diubah, `content-type` salah, key pengguna lain | lulus (`403`) |
+| Intent kedaluwarsa | lulus (`410 MEDIA_UPLOAD_EXPIRED`) |
+| Objek tidak ada | lulus (`409 MEDIA_OBJECT_MISSING`) |
+| Panjang objek salah | lulus (`409 MEDIA_SIZE_MISMATCH`) |
+| Tipe/isi salah (magic bytes) | lulus (`409 MEDIA_CONTENT_MISMATCH`) |
+| Checksum SHA-256 salah | lulus (`409 MEDIA_CHECKSUM_MISMATCH`) |
+| Akses lintas pengguna | lulus (`404`) |
+| Penyelesaian ganda | lulus (`duplicate: true`, satu baris `ready`) |
+| Unggahan ulang ke key yang sama | lulus (`412`) |
+| Hapus objek via outbox, enqueue ganda | lulus (satu baris, objek hilang) |
+| Objek sudah hilang | lulus (`done`) |
+| Kegagalan storage transien | lulus (retry, lalu `done`) |
+| Penghapusan akun | lulus (outbox → worker → objek hilang) |
+
+Perintah lokal yang dipakai:
+
+```bash
+MEDIA_S3_INTEGRATION=1 MEDIA_S3_ENDPOINT=http://127.0.0.1:8333 \
+MEDIA_S3_BUCKET=rj-media-it MEDIA_S3_ACCESS_KEY=... MEDIA_S3_SECRET_KEY=... \
+npm run test:media
+```
+
+Server yang dipakai: SeaweedFS 4.55 (`weed server -s3`). MinIO tidak tersedia karena proyek open-source-nya diarsipkan dan unduhannya dihentikan.

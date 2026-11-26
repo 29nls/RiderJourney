@@ -2,6 +2,7 @@ import { ConflictException, Inject, Injectable, NotFoundException } from '@nestj
 import { v7 as uuidv7 } from 'uuid';
 import { APP_CONFIG, type AppConfig } from '../config/env.js';
 import { DATABASE, type Database } from '../db/database.js';
+import { enqueueMediaDeletion } from '../media/deletion-outbox.js';
 
 type ExportRow = {
   id: string;
@@ -229,7 +230,14 @@ export class PrivacyService {
           await tx.query(`DELETE FROM comments WHERE author_id = $1`, [request.user_id]);
           await tx.query(`DELETE FROM albums WHERE owner_id = $1`, [request.user_id]);
           await tx.query(`DELETE FROM trips WHERE user_id = $1`, [request.user_id]);
+          const media = await tx.query<{ object_key: string }>(
+            `SELECT object_key FROM media_assets WHERE owner_id = $1`,
+            [request.user_id],
+          );
           await tx.query(`DELETE FROM media_assets WHERE owner_id = $1`, [request.user_id]);
+          // The metadata is gone but the bytes are not: the same transaction
+          // records every key so the worker can delete and verify them.
+          await enqueueMediaDeletion(tx, media.map((row) => row.object_key), 'account_deletion');
           await tx.query(`DELETE FROM vehicles WHERE owner_id = $1`, [request.user_id]);
           await tx.query(`DELETE FROM user_grants WHERE user_id = $1`, [request.user_id]);
           await tx.query(`DELETE FROM user_entitlements WHERE user_id = $1`, [request.user_id]);

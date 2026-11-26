@@ -411,3 +411,14 @@ Tidak ada endpoint baru. Yang berubah adalah perilaku dan error yang harus ditan
 | `GET /v1/media/{id}/access`, `POST /v1/media/uploads/{id}/complete`, `GET /v1/media/{id}/url` | `id` wajib UUID; `400 INVALID_ID` |
 
 Kontrak lain, termasuk bentuk sukses, tidak berubah. `docs/openapi.json` hanya memuat path dan skema, sehingga kode error di atas tetap perlu ditangani klien secara eksplisit.
+
+## 20. Perubahan kontrak Phase 6.1 (media)
+
+| Endpoint | Perubahan |
+|---|---|
+| `POST /v1/media/uploads` | `checksumSha256` (64 karakter hex) kini **wajib**. Key objek dibuat server dan tidak lagi memakai `clientMediaId`. Respons `uploadUrl` adalah URL SigV4 asli; `requiredHeaders` berisi `Content-Type` dan `If-None-Match: *` yang harus dikirim apa adanya |
+| `POST /v1/media/uploads/{id}/complete` | **Tidak menerima body.** `sizeBytes` dari klien diabaikan dan dihapus dari kontrak. Server memverifikasi objek di storage. Status: `200` siap (atau `duplicate: true`), `409` bila objek tidak ada/ukuran/tipe/checksum tidak cocok, `410` bila intent kedaluwarsa, `404` bila bukan milik pemanggil |
+| `GET /v1/media/{id}/access` | Respons menambah `downloadUrl` (SigV4 GET, berlaku 60 detik) dan `downloadExpiresIn`. Field lama tidak berubah |
+| `POST /v1/media/uploads/{id}/complete` (galat) | Kode baru: `MEDIA_OBJECT_MISSING`, `MEDIA_SIZE_MISMATCH`, `MEDIA_CONTENT_MISMATCH`, `MEDIA_CHECKSUM_MISMATCH`, `MEDIA_CHECKSUM_MISSING`, `MEDIA_NOT_PENDING`, `MEDIA_UPLOAD_EXPIRED` |
+
+Klien harus mengirim checksum dari byte yang benar-benar akan diunggah dan tidak boleh mengandalkan `200` sebelum objek selesai di-`PUT`.

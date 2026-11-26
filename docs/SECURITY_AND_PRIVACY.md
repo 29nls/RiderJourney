@@ -210,3 +210,17 @@ Batasan keamanan yang masih terbuka:
 - Belum ada uji penetrasi, review dependency, atau alerting produksi.
 - Secret manager, rotasi key, dan uji restore belum dijalankan.
 - Kebijakan retensi dan pengecualian penghapusan akun belum ditinjau legal.
+
+## 18. Penyimpanan media — kontrol Phase 6.1
+
+- Bucket privat; tidak ada ACL publik, tidak ada URL permanen. Akses baca hanya lewat URL SigV4 berumur 60 detik yang diterbitkan setelah tanda tangan aplikasi diverifikasi.
+- Kredensial storage hanya ada di environment server. Tidak ada akses key, session token, atau endpoint internal di respons API maupun aplikasi Android.
+- Key objek 100% dibuat server (`media/{ownerId}/{mediaId}.{ext}`); klien tidak dapat memilih path, dan presigned URL terikat pada satu key sehingga perubahan prefix menghasilkan `403 SignatureDoesNotMatch`.
+- Presigned PUT menandatangani `content-type` dan `if-none-match`. Unggahan dengan tipe berbeda ditolak storage; unggahan ulang ke key yang sudah terisi ditolak `412`.
+- Penyelesaian unggahan tidak mempercayai `sizeBytes`, `contentType`, atau checksum dari body permintaan. Ukuran dan tipe diambil dari `HEAD`, sedangkan SHA-256 dihitung server dari stream objek; magic bytes diperiksa terpisah.
+- `checksumSha256` wajib pada pembuatan intent. Tanpa checksum, unggahan tidak dapat diselesaikan.
+- Batas ukuran ditegakkan dua kali: aplikasi (per tujuan) dan constraint tabel (100 MB absolut).
+- Penghapusan objek tidak pernah diasumsikan berhasil. Outbox mencatat niat, worker menghapus dan memverifikasi ketiadaan objek, dan kegagalan berulang berakhir di dead-letter yang terlihat lewat `npm run media:purge` (status) atau `--run`.
+- Respons galat tidak memuat nama bucket, key, atau pesan dari storage; kode galat stabil (`MEDIA_OBJECT_MISSING`, `MEDIA_SIZE_MISMATCH`, `MEDIA_CHECKSUM_MISMATCH`, dan seterusnya).
+
+Yang belum diverifikasi: bucket policy produksi AWS (Block Public Access, TLS, IAM least-privilege), masa retensi objek `pending` yang ditinggalkan klien, dan pemindaian malware.

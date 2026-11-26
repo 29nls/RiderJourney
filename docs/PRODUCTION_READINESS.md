@@ -153,3 +153,26 @@ Temuan baru yang **belum** diperbaiki (jangan dianggap selesai):
 - [ ] **BLOCKED** Uji end-to-end media dengan MinIO/S3: tidak ada endpoint, kredensial, atau container.
 - [ ] **BLOCKED** Uji perangkat Android: tidak ada emulator/perangkat yang menjalankan build ini; FGS, izin lokasi, process death, dan offline belum diuji.
 - [ ] **BLOCKED** Redis nyata, LiveKit, staging, dan Play Billing tetap seperti sebelumnya.
+
+## 12. Phase 6.1 — media pipeline (26 November 2026)
+
+Status keseluruhan tetap **BELUM SIAP PRODUKSI**, tetapi P0 media yang terbuka pada Phase 6 sudah ditutup pada level kode dan diuji terhadap server S3-compatible sungguhan.
+
+Yang berubah:
+
+- [x] **LULUS** Presigned PUT memakai AWS SDK v3 dengan SigV4 kanonikal, bukan HMAC buatan sendiri. Diuji dengan server S3 nyata: signature valid, signature diubah → `403`, `content-type` berbeda → `403`.
+- [x] **LULUS** Key objek dibuat server (`media/{ownerId}/{mediaId}.{ext}`); tidak ada input klien di path.
+- [x] **LULUS** `complete` tidak lagi menerima `sizeBytes`/file dari klien. `HEAD` memverifikasi keberadaan, panjang, dan tipe; SHA-256 dihitung server dari stream; magic bytes diperiksa. Ukuran salah, tipe salah, checksum salah, dan objek hilang semuanya ditolak `409`.
+- [x] **LULUS** Penyelesaian idempoten (`ready` kedua → `duplicate: true`) dan tidak dapat berpindah status dari `rejected`/`deleted`.
+- [x] **LULUS** Outbox `media_deletion_outbox` + worker `SKIP LOCKED`; penghapusan diverifikasi dengan `HEAD`, objek yang sudah hilang dianggap sukses, kegagalan transien di-retry dengan backoff, baris gagal menjadi `failed`.
+- [x] **LULUS** Penghapusan akun dan purge sosial memasukkan key objek ke outbox dalam transaksi yang sama.
+- [x] **LULUS** Uji integrasi storage: 11 kasus pada server S3-compatible nyata.
+- [x] **LULUS** `npm test` tetap 40 lulus, 0 gagal (11 uji integrasi di-skip tanpa storage).
+- [x] **LULUS** `npm run build` admin tidak terpengaruh kontrak backend.
+
+Yang **belum** selesai:
+
+- [ ] **BLOCKED** Verifikasi terhadap AWS S3 produksi (bucket policy, Block Public Access, IAM least-privilege, TLS, biaya). Hanya S3-compatible (SeaweedFS) yang diuji.
+- [ ] **BLOCKED** MinIO sebagai target uji: server open-source MinIO sudah diarsipkan dan tidak lagi didistribusikan (`dl.min.io` → HTTP 410, repositori Docker Hub hilang).
+- [ ] Belum ada lifecycle untuk intent `pending` yang ditinggalkan (objek yatim) atau pemindaian malware.
+- [ ] Android belum memiliki layar unggah media; kontrak baru belum dipakai klien mana pun.

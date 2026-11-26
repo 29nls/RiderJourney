@@ -34,7 +34,7 @@ before(async () => {
   const applied = await runMigrations(db);
   assert.deepEqual(applied, [
     '0001_init.sql', '0002_convoys.sql', '0003_phase3.sql',
-    '0004_phase4.sql', '0005_community.sql', '0006_phase4_social.sql', '0007_phase5.sql', '0008_phase1.sql', '0009_phase6.sql',
+    '0004_phase4.sql', '0005_community.sql', '0006_phase4_social.sql', '0007_phase5.sql', '0008_phase1.sql', '0009_phase6.sql', '0010_phase6_1.sql',
   ]);
   const built = await buildTestApp(db);
   app = built.app;
@@ -275,7 +275,7 @@ test('albums enforce visibility, quota, permission, and moderation', async () =>
   assert.equal(attached.body.media[0].moderationStatus, 'approved');
   const duplicate = await api.post(`/v1/albums/${publicAlbum.body.id}/media`).set(auth(A.token)).send({ mediaId: albumPhotoMedia });
   assert.equal(duplicate.body.duplicate, true);
-  assert.equal(Number(duplicate.body.usedBytes), 11);
+  assert.equal(Number(duplicate.body.usedBytes), Number(attached.body.usedBytes));
 
   const forbidden = await api.post(`/v1/albums/${privateAlbum.body.id}/media`).set(auth(B.token)).send({ mediaId: albumPhotoMedia });
   assert.equal(forbidden.status, 403);
