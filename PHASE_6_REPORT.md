@@ -141,9 +141,10 @@ Tidak dijalankan: uji penetrasi, uji beban, uji otorisasi dua akun baru untuk se
 | `node tools/junk-check.mjs` (dari `backend/`) | 0 baris mencurigakan |
 | `cd admin && npm run build` | sukses |
 | `npm audit --omit=dev` backend & admin | 0 kerentanan |
-| GitHub Actions CI #3 (`main`) | sukses (backend + admin) |
+| GitHub Actions CI #3 (`main`, `c191c59`) | sukses (backend + admin) |
+| GitHub Actions CI #4 (`main`, `0c6af38`) | sukses: backend, admin, dan android |
 
-Setelah perubahan CI (job Android ditambahkan), pipeline baru akan tervalidasi pada push berikutnya; job Android belum pernah berjalan di GitHub.
+Job `android` pada CI #4 menjalankan `./gradlew --no-daemon testDebugUnitTest assembleDebug` dengan Java 21 dan lulus, sehingga build Android juga tervalidasi di GitHub, bukan hanya di mesin lokal.
 
 ## 11. Android device test results
 
@@ -193,7 +194,7 @@ Tidak ada endpoint baru. Perubahan perilaku:
 - Belum ada layar consent, penghapusan akun, unggah media, tempat favorit.
 - Presigned upload belum SigV4; `complete` belum memverifikasi objek.
 - Penghapusan objek storage belum diuji.
-- CI job Android belum pernah berjalan di GitHub.
+- Chat belum menerima pesan realtime (perlu muat ulang).
 - `junk-check` dijalankan dari `backend/`, sesuai `working-directory` workflow.
 
 ## 16. Remaining blockers

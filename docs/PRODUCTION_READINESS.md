@@ -137,6 +137,7 @@ Bukti yang dijalankan ulang pada Phase 6:
 - [x] **LULUS** `cd android && ./gradlew assembleDebug` menghasilkan `app-debug.apk`.
 - [x] **LULUS** `npm audit --omit=dev` di backend dan admin: 0 kerentanan.
 - [x] **LULUS** CI GitHub run #3 pada `main` hijau (backend dan admin).
+- [x] **LULUS** CI GitHub run #4 pada `main` hijau untuk backend, admin, dan android (Java 21).
 
 Perbaikan keamanan Phase 6:
 

@@ -230,6 +230,7 @@ Perintah dan hasil yang benar-benar dijalankan:
 | `cd admin && npm run build` | Next.js | sukses |
 | `npm audit --omit=dev` (backend, admin) | Dependensi produksi | 0 kerentanan |
 | GitHub Actions CI #3 pada `main` | backend + admin | sukses |
+| GitHub Actions CI #4 pada `main` | backend, admin, android | sukses |
 
 Test regresi baru di `backend/src/test/phase6.test.ts`:
 
