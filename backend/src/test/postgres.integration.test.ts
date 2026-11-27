@@ -55,7 +55,7 @@ test('foreign keys are enforced', { skip }, async () => {
   await assert.rejects(
     async () => {
       await db.query(
-        "INSERT INTO media_assets (id, owner_user_id, storage_key, bucket, content_type, byte_size, scan_status, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, 'unscanned', now(), now())",
+        "INSERT INTO media_assets (id, owner_id, storage_key, bucket, content_type, byte_size, scan_status, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, 'unscanned', now(), now())",
         ['00000000-0000-0000-0000-000000000099', '00000000-0000-0000-0000-000000000000', 'k', 'b', 'image/jpeg', 1],
       );
     },
