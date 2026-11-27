@@ -55,12 +55,12 @@ test('foreign keys are enforced', { skip }, async () => {
   await assert.rejects(
     async () => {
       await db.query(
-        "INSERT INTO media_assets (id, owner_id, storage_key, bucket, content_type, byte_size, scan_status, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, 'unscanned', now(), now())",
-        ['00000000-0000-0000-0000-000000000099', '00000000-0000-0000-0000-000000000000', 'k', 'b', 'image/jpeg', 1],
+        "INSERT INTO media_assets (id, owner_id, purpose, mime_type, size_bytes, object_key, status) VALUES ($1, $2, 'avatar', 'image/jpeg', 1, 'k', 'pending')",
+        ['00000000-0000-0000-0000-000000000099', '00000000-0000-0000-0000-000000000000'],
       );
     },
     /foreign key|violates/i,
-    'media_assets.owner_user_id foreign key must be enforced',
+    'media_assets.owner_id foreign key must be enforced',
   );
 });
 
