@@ -242,3 +242,13 @@ jobs:
           arch: x86_64
           working-directory: android
           script: ./gradlew connectedDebugAndroidTest
+      - name: Connected test results must show executed cases
+        if: always()
+        run: node android/tools/check-connected-results.mjs
+      - name: Upload connected test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-connected-results
+          path: android/app/build/outputs/androidTest-results/connected
+          if-no-files-found: warn
