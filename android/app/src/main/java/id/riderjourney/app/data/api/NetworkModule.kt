@@ -13,6 +13,7 @@ import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import java.util.concurrent.TimeUnit
+import javax.inject.Named
 import javax.inject.Singleton
 
 @Module
@@ -58,4 +59,20 @@ object NetworkModule {
     @Provides
     @Singleton
     fun api(retrofit: Retrofit): RiderJourneyApi = retrofit.create(RiderJourneyApi::class.java)
+
+    /** Bare OkHttpClient for presigned S3 PUT/GET — no Authorization header, no TokenAuthenticator. */
+    @Provides
+    @Singleton
+    @Named("storage")
+    fun storageOkHttp(): OkHttpClient {
+        val logging = HttpLoggingInterceptor().apply {
+            level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BASIC else HttpLoggingInterceptor.Level.NONE
+        }
+        return OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
+            .addInterceptor(logging)
+            .build()
+    }
 }

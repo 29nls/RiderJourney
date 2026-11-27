@@ -16,7 +16,7 @@ after(async () => {
 
 test('phase 4 migrations apply in order on PostgreSQL with PostGIS', async () => {
   const applied = await runMigrations(db);
-  assert.deepEqual(applied, ['0001_init.sql', '0002_convoys.sql', '0003_phase3.sql', '0004_phase4.sql', '0005_community.sql', '0006_phase4_social.sql', '0007_phase5.sql', '0008_phase1.sql', '0009_phase6.sql', '0010_phase6_1.sql']);
+  assert.deepEqual(applied, ['0001_init.sql', '0002_convoys.sql', '0003_phase3.sql', '0004_phase4.sql', '0005_community.sql', '0006_phase4_social.sql', '0007_phase5.sql', '0008_phase1.sql', '0009_phase6.sql', '0010_phase6_1.sql', '0011_phase6_2.sql', '0012_phase6_3.sql', '0013_phase6_4.sql']);
   const tables = await db.query<{ table_name: string }>(
     `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`,
   );

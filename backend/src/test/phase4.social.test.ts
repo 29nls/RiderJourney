@@ -34,7 +34,7 @@ before(async () => {
   const applied = await runMigrations(db);
   assert.deepEqual(applied, [
     '0001_init.sql', '0002_convoys.sql', '0003_phase3.sql',
-    '0004_phase4.sql', '0005_community.sql', '0006_phase4_social.sql', '0007_phase5.sql', '0008_phase1.sql', '0009_phase6.sql', '0010_phase6_1.sql',
+    '0004_phase4.sql', '0005_community.sql', '0006_phase4_social.sql', '0007_phase5.sql', '0008_phase1.sql', '0009_phase6.sql', '0010_phase6_1.sql', '0011_phase6_2.sql', '0012_phase6_3.sql', '0013_phase6_4.sql',
   ]);
   const built = await buildTestApp(db);
   app = built.app;
@@ -302,7 +302,7 @@ test('albums enforce visibility, quota, permission, and moderation', async () =>
   const communityMedia = await uploadImage(api, B.token, 'album_photo_bravo_1', 'album_photo');
   const added = await api.post(`/v1/albums/${communityAlbum.body.id}/media`).set(auth(B.token)).send({ mediaId: communityMedia.id });
   assert.equal(added.status, 200, JSON.stringify(added.body));
-  assert.equal(added.body.media[0].moderationStatus, 'pending');
+  assert.equal(added.body.media[0].moderationStatus, 'pending_review');
   const reviewed = await api.post(`/v1/albums/${communityAlbum.body.id}/media/${communityMedia.id}/review`).set(auth(A.token)).send({ status: 'approved' });
   assert.equal(reviewed.status, 200, JSON.stringify(reviewed.body));
   const visible = await api.get(`/v1/albums/${communityAlbum.body.id}`).set(auth(B.token));

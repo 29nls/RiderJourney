@@ -45,6 +45,7 @@ data class UserDto(
     val bio: String? = null,
     val city: String? = null,
     val avatarUrl: String? = null,
+    val avatarMediaId: String? = null,
     val visibility: String,
     val status: String,
     val emailVerified: Boolean,
@@ -69,6 +70,7 @@ data class MeDto(
     val bio: String? = null,
     val city: String? = null,
     val avatarUrl: String? = null,
+    val avatarMediaId: String? = null,
     val visibility: String = "public",
     val status: String = "active",
     val emailVerified: Boolean = false,
@@ -83,6 +85,7 @@ data class UpdateProfileRequest(
     val bio: String? = null,
     val city: String? = null,
     val avatarUrl: String? = null,
+    val avatarMediaId: String? = null,
     val visibility: String? = null,
 )
 
@@ -102,6 +105,7 @@ data class VehicleDto(
     val engineCc: Int? = null,
     val nickname: String? = null,
     val photoUrl: String? = null,
+    val photoMediaId: String? = null,
     val isPrimary: Boolean = false,
     val hasPlate: Boolean = false,
     val plate: String? = null,
@@ -121,6 +125,7 @@ data class VehicleRequest(
     val engineCc: Int? = null,
     val nickname: String? = null,
     val plate: String? = null,
+    val photoMediaId: String? = null,
 )
 
 @Serializable

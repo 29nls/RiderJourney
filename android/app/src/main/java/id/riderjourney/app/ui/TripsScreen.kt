@@ -123,7 +123,9 @@ fun TripsScreen(viewModel: TripViewModel = hiltViewModel()) {
                                     Uri.fromParts("package", context.packageName, null),
                                 ),
                             )
-                        } else {
+                        } else if (Build.VERSION.SDK_INT >= 29) {
+                            // Background location only exists from API 29; on older
+                            // devices the settings deep link above is the only path.
                             backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
                         }
                     }) { Text("Izin latar belakang") }

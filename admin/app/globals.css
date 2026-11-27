@@ -573,3 +573,34 @@ details pre { margin-top: 8px; }
   .dialog { padding: 18px; }
   .toast { right: 16px; bottom: 16px; }
 }
+
+.previewMedia {
+  display: block;
+  max-width: min(420px, 100%);
+  max-height: 320px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  margin: 12px 0 18px;
+}
+
+.timeline {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.timeline li {
+  border-left: 2px solid var(--line);
+  padding-left: 12px;
+  font-size: 0.9rem;
+}
+
+.timeline .cellSub {
+  display: block;
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-top: 2px;
+}

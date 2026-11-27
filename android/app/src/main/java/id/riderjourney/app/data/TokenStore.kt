@@ -1,6 +1,7 @@
 package id.riderjourney.app.data
 
 import android.content.Context
+import androidx.core.content.edit
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -25,11 +26,17 @@ class TokenStore @Inject constructor(@ApplicationContext context: Context) {
 
     @Synchronized
     fun save(accessToken: String, refreshToken: String) {
-        prefs.edit().putString("access_token", accessToken).putString("refresh_token", refreshToken).apply()
+        prefs.edit {
+            putString("access_token", accessToken)
+            putString("refresh_token", refreshToken)
+        }
     }
 
     @Synchronized
     fun clear() {
-        prefs.edit().remove("access_token").remove("refresh_token").apply()
+        prefs.edit {
+            remove("access_token")
+            remove("refresh_token")
+        }
     }
 }

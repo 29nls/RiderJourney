@@ -23,12 +23,27 @@ jobs:
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
       - run: npm audit --omit=dev --audit-level=high
-      - run: npm run typecheck && npm test
+      # Lint/type gate. The project has no separate ESLint config; tsc in strict
+      # mode is the static gate, and junk-check catches corrupted writes.
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+      # Every suite starts from an empty PGlite database and applies the real
+      # migrations through runMigrations, so a broken migration fails this step.
+      # Serial on purpose: every file boots its own PGlite database and runs
+      # PBKDF2, and running them in parallel pushes the migration test past its
+      # timeout on a 2-core runner. The suite is deterministic this way.
+      - name: Unit and migration tests
+        run: node --test --test-concurrency=1 --test-timeout=120000 "dist/test/*.test.js"
         env:
           NODE_ENV: test
           AUTH_JWT_SECRET: ci-secret-with-at-least-32-characters
           AUTH_EXPOSE_DEV_TOKENS: "true"
           PLATE_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
+          MEDIA_S3_BUCKET: ci-placeholder
+          MEDIA_S3_ACCESS_KEY: ci-placeholder
+          MEDIA_S3_SECRET_KEY: ci-placeholder
       - run: node tools/junk-check.mjs
 
   admin:
@@ -54,13 +69,23 @@ jobs:
         working-directory: android
     steps:
       - uses: actions/checkout@v4
+      # AGP 8.11 supports JDK 17-23; 21 is the version this build is tested on.
+      # Java 25 is rejected outright, so pinning here is deliberate.
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
       - run: chmod +x gradlew
-      - run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
+      - name: Lint, unit tests, and debug build
+        run: ./gradlew --no-daemon lintDebug testDebugUnitTest assembleDebug assembleDebugAndroidTest
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-lint
+          path: android/app/build/reports/lint-results-debug.*
+          if-no-files-found: ignore
 
   media-integration:
     runs-on: ubuntu-latest
@@ -103,3 +128,91 @@ jobs:
           MEDIA_S3_ACCESS_KEY: ciaccess
           MEDIA_S3_SECRET_KEY: cisecret123
           MEDIA_S3_FORCE_PATH_STYLE: "true"
+          AUTH_JWT_SECRET: ci-secret-with-at-least-32-characters
+          AUTH_EXPOSE_DEV_TOKENS: "true"
+          PLATE_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
+
+  clamav-integration:
+    # Real clamd, not a mock TCP server. The image is pinned to a release tag so
+    # the signature set and protocol behaviour do not drift under us.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      clamav:
+        image: clamav/clamav:1.4.2
+        ports:
+          - 3310:3310
+        options: >-
+          --health-cmd "/usr/local/bin/clamdcheck.sh"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 20
+          --health-start-period 180s
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      # The suite skips itself unless this flag is set, so a broken daemon shows
+      # up as a failure rather than a silently green run.
+      - name: ClamAV integration (clean, EICAR, failures, worker state)
+        run: node --test "dist/test/clamav.integration.test.js"
+        env:
+          CLAMAV_INTEGRATION: "1"
+          CLAMAV_HOST: 127.0.0.1
+          CLAMAV_PORT: "3310"
+          CLAMAV_TIMEOUT_MS: "60000"
+          NODE_ENV: test
+          AUTH_JWT_SECRET: ci-secret-with-at-least-32-characters
+          AUTH_EXPOSE_DEV_TOKENS: "true"
+          PLATE_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
+          MEDIA_S3_BUCKET: ci-placeholder
+          MEDIA_S3_ACCESS_KEY: ci-placeholder
+          MEDIA_S3_SECRET_KEY: ci-placeholder
+
+  postgres-integration:
+    # Real PostgreSQL + PostGIS, not PGlite. Migrations 0001-0013 and spatial
+    # behaviour must be proven against the actual engine.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: riderjourney
+          POSTGRES_PASSWORD: riderjourney
+          POSTGRES_DB: riderjourney_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U riderjourney -d riderjourney_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+          --health-start-period 30s
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: PostgreSQL/PostGIS integration (migrations, constraints, spatial, transactions)
+        run: node --test "dist/test/postgres.integration.test.js"
+        env:
+          POSTGRES_INTEGRATION: "1"
+          DATABASE_URL: postgres://riderjourney:riderjourney@127.0.0.1:5432/riderjourney_test
+          NODE_ENV: test
+          AUTH_JWT_SECRET: ci-secret-with-at-least-32-characters
+          AUTH_EXPOSE_DEV_TOKENS: "true"
+          PLATE_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=

@@ -215,3 +215,115 @@ Android yang belum memiliki layar sama sekali pada Phase 6: consent/privasi, per
 | Verifikasi AWS produksi | BLOCKED | Tidak ada akun/bucket AWS; hanya S3-compatible yang diuji |
 | MinIO sebagai target uji | BLOCKED | MinIO open-source diarsipkan, unduhan 410 |
 | Intent `pending` yang ditinggalkan | FAIL | Belum ada lifecycle/TTL objek yatim |
+
+## 11. Status storage lifecycle dan Android media (Phase 6.2, 27 November 2026)
+
+| Requirement | Status | Bukti |
+| --- | --- | --- |
+| Deteksi upload intent kedaluwarsa | PASS | `UploadCleanupService.cleanupExpired` |
+| Verifikasi objek nyata sebelum hapus | PASS | `HEAD` sebelum CAS |
+| Enqueue penghapusan objek orphan | PASS | `enqueueMediaDeletion` dalam transaksi yang sama |
+| Intent tanpa objek di-expire tanpa job | PASS | test `missing object` |
+| Media `ready` tidak tersentuh | PASS | test `cleanup never touches ready media` |
+| Idempotensi pembersihan | PASS | CAS `status + object_key + expiry` |
+| Worker penghapusan periodik | PASS | `startScheduled(pollSeconds, batchSize)` |
+| Konkurensi aman antar instance | PASS | `FOR UPDATE SKIP LOCKED` + lease 10 menit |
+| Retry & exponential backoff | PASS | `base * 2^(n-1)`, cap 3600 s |
+| Dead-letter monitoring | PASS | `status().failed`, `lastResult` |
+| Graceful shutdown worker | PASS | `stopScheduled()` menunggu batch |
+| Kuota per pengguna | PASS | tabel `storage_quotas` |
+| Perhitungan used storage | PASS | diturunkan dari `media_assets.status='ready'` |
+| Reservasi upload pending | PASS | `reserveUpload` / `releaseReservation` |
+| Enforcement kuota saat intent | PASS | `409 STORAGE_QUOTA_EXCEEDED` |
+| Rekonsiliasi kuota | PASS | `reconcile(userId)` |
+| Proteksi konsumsi paralel | PASS | UPDATE bersyarat + test paralel |
+| Otorisasi unduh berbasis visibilitas | PASS | `accessible()` + `signGet` |
+| Capability URL berumur pendek | PASS | HMAC id+expiry, presigned GET 60 s |
+| Interface media scanning | PASS | `MediaScanner` + `NoOpMediaScanner` |
+| Provider scanning nyata | BLOCKED | belum ada provider |
+| Android upload repository | PASS | `MediaRepository` |
+| SHA-256 dari file (streaming) | PASS | `MediaChecksum`, unit test |
+| Header presigned persis | PASS | `MediaUploadRequest`, unit test |
+| Completion tanpa body | PASS | `api.completeUpload(id)` tanpa payload |
+| Upload state (idle…cancelled) | PASS | kolom `state` di Room |
+| Upload progress | PASS | callback per chunk → UI; Room menyimpan fase |
+| Retry & duplicate prevention | PASS | `clientMediaId` tetap, re-issue intent |
+| Pemulihan URL kedaluwarsa | PASS | `needsNewIntent` + re-issue |
+| Persistensi state (Room) | PASS | `MediaUploadEntity`/`MediaUploadDao` |
+| Avatar upload/preview/replace | PASS | `ProfileScreen` + `MediaImage` |
+| Vehicle photo upload/preview | PASS | `GarageScreen` + `photoMediaId` |
+| Media display via signed URL | PASS | `MediaRepository.loadImage` |
+| Access denied handling | PASS | `Result.failure` → pesan galat |
+| AWS production compatibility | BLOCKED | belum diuji ke AWS |
+
+## 12. Status Phase 6.3 — penghapusan, observability, scanning (27 November 2026)
+
+| Requirement | Status | Bukti |
+| --- | --- | --- |
+| Endpoint hapus media | PASS | `DELETE /v1/media/:id` |
+| Penegakan kepemilikan | PASS | test non-owner 404, anonim 401 |
+| Deteksi referensi media | PASS | `referencesOf()` 9 sumber |
+| Media bersama terlindungi | PASS | `409 MEDIA_IN_USE` + `references` |
+| Penggantian avatar aman | PASS | transaksi + test |
+| Penggantian foto kendaraan aman | PASS | transaksi + test |
+| Outbox transaksional | PASS | CAS + insert satu transaksi |
+| Verifikasi penghapusan objek | PASS | `HEAD` pasca-delete |
+| Double deletion idempoten | PASS | test khusus |
+| Kuota dilepas setelah hapus nyata | PASS | `deleting` dihitung `usedBytes` |
+| Endpoint admin health | PASS | `/v1/admin/media/workers` |
+| Worker status tersedia | PASS | `health()` + `status()` |
+| Dead-letter terlihat | PASS | `failed` + `lastError` |
+| Pending queue terlihat | PASS | `pending` + `oldestPendingSeconds` |
+| Error status tersedia | PASS | `lastFailureAt`, `lastError` |
+| Admin authorization | PASS | `AdminGuard`, test 401/403 |
+| Scanner adapter nyata | PASS | `ClamAvMediaScanner` INSTREAM |
+| Malware scanning diuji provider nyata | BLOCKED | tidak ada clamd/Docker |
+| Scanner failure bukan clean | PASS | test `scan_failed` |
+| Karantina bekerja | PASS | test akses publik ditolak |
+| Public media ikut scan policy | PASS | fail-closed `scan_status='clean'` |
+| Moderasi konten dipisah dari malware | PASS | `moderation_status` terpisah |
+| Android hapus avatar | PASS | kode + build |
+| Android replace avatar | PASS | kode + build |
+| Android hapus foto kendaraan | PASS | kode + build |
+| Android replace foto kendaraan | PASS | kode + build |
+| Media state tersinkron | PASS | status `deleting`/`deleted` + refresh kuota |
+| Kuota diperbarui di UI | PASS | `refreshQuota()` + ProfileScreen |
+| Expired URL ditangani | PASS | `needsNewIntent` + re-issue intent |
+| Quarantined media tidak tampil publik | PASS | server 404; klien menampilkan galat |
+| Video support | BLOCKED | backend siap, Android belum punya layar composer |
+
+## 13. Status Phase 6.4 — reliability & verifikasi (27 November 2026)
+
+| Requirement | Status | Bukti |
+| --- | --- | --- |
+| Deteksi job penghapusan basi | PASS | `reconcileStale` + test requeue |
+| Reclaim lease & requeue retryable | PASS | test lease/retry 6.3 + 6.4 |
+| Kuota tidak dilepas sebelum objek hilang | PASS | test `deleting` tetap dihitung |
+| Verifikasi HEAD sebelum `deleted` | PASS | reconcile memakai `HEAD` |
+| Pembatalan hanya sebelum klaim | PASS | `409` setelah `attempts>0` |
+| Race pembatalan vs worker | PASS | `FOR UPDATE` baris media + outbox |
+| Dead-letter recovery admin-only | PASS | `media.ops` + step-up, audit |
+| Riwayat kegagalan dipertahankan | PASS | `media_deletion_ops_log` + audit |
+| ClamAV daemon nyata | BLOCKED | tidak ada Docker; job CI disiapkan |
+| EICAR terdeteksi | BLOCKED | butuh daemon nyata (mock hanya protokol) |
+| Quarantine tidak pernah publik | PASS | 404 untuk non-pemilik, preview 409 |
+| Scanner gagal ≠ clean | PASS | test 6.3 + 6.4 |
+| CI menjalankan container scanner | BLOCKED | workflow ditulis, belum dijalankan |
+| Malware vs moderation terpisah | PASS | kolom & service terpisah |
+| Queue moderasi + approve/reject | PASS | endpoint admin + panel admin |
+| Alasan & audit trail | PASS | `media_moderation_log`, `admin_audit_logs` |
+| Reviewer tak berwenang ditolak | PASS | support → `403` |
+| Alert worker unavailable | PASS | `deletion_worker_unavailable` |
+| Alert dead-letter | PASS | `deletion_dead_letter` |
+| Dedup & recovery event | PASS | `occurrences`, `resolved_at` |
+| Provider notifikasi | BLOCKED | no-op jujur, belum ada delivery |
+| Android lint correctness/security | PASS | `InlinedApi`, `ObsoleteSdkInt`, backup rules |
+| Android unit test | PASS | `testDebugUnitTest` |
+| Device test | BLOCKED | instrumented test disiapkan, tidak dijalankan |
+| Video (fase ini) | NOT APPLICABLE | dilarang oleh instruksi fase |
+
+## Status verifikasi (PHASE 6.5)
+
+- SeaweedFS 4.55 lokal: PASS (11/11).
+- ClamAV 1.4.7 lokal: PASS (10/10).
+- GitHub Actions / emulator / PostgreSQL nyata / AWS: BLOCKED.

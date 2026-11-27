@@ -1,4 +1,4 @@
-import { IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 
 export class CreateVehicleDto {
   @IsIn(['motorcycle', 'car', 'other'])
@@ -40,6 +40,11 @@ export class CreateVehicleDto {
   @IsString()
   @MaxLength(20)
   plate?: string;
+
+  @IsOptional()
+  @ValidateIf((dto: CreateVehicleDto) => dto.photoMediaId !== '')
+  @IsUUID()
+  photoMediaId?: string;
 }
 
 export class UpdateVehicleDto {
@@ -85,4 +90,9 @@ export class UpdateVehicleDto {
   @IsString()
   @MaxLength(20)
   plate?: string;
+
+  @IsOptional()
+  @ValidateIf((dto: UpdateVehicleDto) => dto.photoMediaId !== '')
+  @IsUUID()
+  photoMediaId?: string;
 }

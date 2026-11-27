@@ -277,3 +277,152 @@ npm run test:media
 ```
 
 Server yang dipakai: SeaweedFS 4.55 (`weed server -s3`). MinIO tidak tersedia karena proyek open-source-nya diarsipkan dan unduhannya dihentikan.
+
+## 17. Bukti Phase 6.2 — storage lifecycle & Android media (27 November 2026)
+
+Dijalankan di Windows, Node 22, JDK 21 (`android/.tooling/jdk-21.0.13.1+2`),
+Gradle 8.13, AGP 8.11.1.
+
+### 17.1 Backend (`backend/src/test/phase6_2.test.ts`)
+
+```
+npm run typecheck      → bersih
+npm run build          → bersih
+node --test dist/test/phase6_2.test.js
+  tests 18, pass 18, fail 0
+```
+
+| Test | Perilaku yang dijaga |
+| --- | --- |
+| `expired intent with an orphan object…` | status `expired`, 1 job outbox, reservasi dilepas |
+| `expired intent without an object…` | status `expired`, 0 job |
+| `cleanup never touches ready media…` | objek `ready` tidak dihapus |
+| `completion and expiration racing…` | satu pemenang; completion tidak pernah sukses |
+| `completion after the deletion worker removed…` | `409 MEDIA_OBJECT_MISSING` |
+| `the scheduled worker runs on its own…` | periode berjalan, `stopScheduled` berhenti |
+| `two worker instances never delete the same job twice` | 6 job, 2 worker, tiap job `done` |
+| `a job abandoned by a crashed worker…` | lease 10 menit diklaim ulang |
+| `a job that always fails is dead-lettered…` | `status='failed'`, `last_error` terisi |
+| `concurrent upload intents cannot exceed quota` | sebagian `409`, reservasi = jumlah yang lolos |
+| `reconciliation rebuilds reservations…` | drift diperbaiki dari baris `pending` |
+| `signed GET is scoped to the media…` | signature lintas media → `401` |
+| `an expired signed URL is refused…` | `401 SIGNED_URL_EXPIRED` |
+| `a viewer who may not see the media cannot mint…` | `404` untuk non-owner, `401` anonim |
+| `a shared-purpose media id stays readable…` | avatar tetap terbaca pengguna lain |
+| `completion trusts the stored object…` | `409 MEDIA_CHECKSUM_MISMATCH` |
+| `a mismatched content type is rejected…` | `409 MEDIA_CONTENT_MISMATCH` |
+| `the quota endpoint reports derived usage…` | `usedBytes` = jumlah `ready` |
+
+Storage double (`FakeObjectStorage`) hanya dipakai sebagai unit double; suite
+`media.integration.test.ts` tetap memakai SeaweedFS 4.55 lewat `S3ObjectStorage`.
+
+### 17.2 Android
+
+```
+./gradlew --no-daemon lintDebug testDebugUnitTest assembleDebug
+  BUILD SUCCESSFUL
+  lint: 0 errors, 32 warnings
+  testDebugUnitTest: 22 test, 0 gagal
+    MediaChecksumTest 6, GpsFilterTest 8, TripStateMachineTest 6, ChatMergeTest 2
+  app-debug.apk dihasilkan
+```
+
+`MediaChecksumTest` menutup SHA-256 (vektor `abc`, payload lebih besar dari
+buffer, input kosong), `countBytes`, `needsNewIntent`, dan header presigned PUT
+(hanya `Content-Type` dan `If-None-Match`, tanpa `Authorization`).
+
+### 17.3 Yang belum dijalankan
+
+- Storage integration SeaweedFS di mesin lokal (dijalankan di CI; tidak ada
+  server S3 lokal di sini).
+- Instrumented test / emulator: tidak tersedia.
+- Pengujian AWS S3, IAM, STS, SSE: tidak ada kredensial.
+
+## 18. Bukti Phase 6.3 — penghapusan, observability, scanning (27 November 2026)
+
+Backend (`backend/src/test/phase6_3.test.ts`), 15 test:
+
+| Test | Perilaku yang dijaga |
+| --- | --- |
+| `deleting own media enqueues the object…` | `deleting`, 1 job, kuota tetap sampai objek hilang |
+| `deleting a media owned by someone else…` | `404`, status tidak berubah, anonim `401` |
+| `deleting twice is idempotent…` | `duplicate: true`, satu job |
+| `media referenced by a vehicle cannot be deleted` | `409 MEDIA_IN_USE` + detach melepas |
+| `replacing an avatar detaches the old media…` | media lama `deleting`, mirror `rider_profiles` benar |
+| `a replaced avatar that is still used elsewhere…` | media bersama tetap `ready` |
+| `unscanned and quarantined media are refused…` | non-owner `404`; owner `200` |
+| `the admin worker endpoint is closed…` | 401/403 untuk non-admin |
+| `with no scanner the worker leaves media unscanned…` | tidak ada `clean` tanpa scanner |
+| `the ClamAV adapter speaks INSTREAM…` | protokol clamd → `clean` |
+| `a FOUND reply quarantines the media` | → `quarantined` + signature |
+| `an unreachable scanner is a failure…` | → `scan_failed` |
+| `the scan worker records clean…` | baris menjadi `clean`, `scanned_at` terisi |
+| `a scan that keeps failing stops at the attempt limit…` | `scan_failed`, error tersimpan |
+| `quota accounting keeps the same rule…` | `usedBytes = ready + deleting`, reservasi ditolak |
+
+Dua test lama (`api.test.ts`, `phase4.test.ts`) mengunci daftar migrasi; keduanya
+diperbarui untuk menyertakan `0012_phase6_3.sql` — bukan dilonggarkan, hanya
+disesuaikan dengan migrasi yang memang baru.
+
+Android: `lintDebug testDebugUnitTest assembleDebug` (hasil di laporan fase).
+
+Yang belum dijalankan: clamd nyata (tidak ada Docker), emulator/instrumented
+test, dan job CI.
+
+## 19. Bukti Phase 6.4 — reliability & verifikasi (27 November 2026)
+
+**Backend**
+
+```bash
+cd backend
+npm run build
+node --test --test-concurrency=1 --test-timeout=120000 "dist/test/*.test.js"
+```
+
+Serial karena setiap file menyalakan PGlite sendiri dan menjalankan PBKDF2;
+paralel membuat test migrasi melewati timeout di mesin 2 core. Hasil final:
+**103 test, 86 pass, 0 fail, 17 skip**.
+
+- `phase6_4.test.ts` (9 test): reconcile requeue vs `deleted`, kuota ditahan,
+  pembatalan (sebelum klaim, setelah klaim, media asing, sudah terhapus),
+  dead-letter list/retry/409, moderasi (queue, 403 support, alasan wajib, approve,
+  reject, reopen, `scan_status` tidak berubah), media pribadi `not_required`,
+  alert dedup + recovery + `notifier.available=false`.
+- `clamav.integration.test.ts`: 10 test, **skip** tanpa `CLAMAV_INTEGRATION=1`.
+  Empat di antaranya memerlukan daemon nyata (clean, EICAR, multi-chunk, worker
+  karantina, retry, reclaim lease); sisanya memakai server TCP terkontrol untuk
+  kasus daemon mati, timeout, size limit, dan balasan tak terduga.
+
+**Admin**
+
+```bash
+cd admin && npm run build
+```
+
+**Android**
+
+```bash
+cd android && export JAVA_HOME="$PWD/.tooling/jdk-21.0.13.1+2"
+./gradlew.bat --no-daemon lintDebug testDebugUnitTest assembleDebug assembleDebugAndroidTest
+```
+
+Audit 36 warning lint: kategori dan tindakan ada di `PHASE_6_4_REPORT.md` §11.
+
+**Status setelah PHASE 6.5 (lokal)**
+
+- ClamAV nyata (daemon 1.4.7 Windows): **PASS** — 10/10 `clamav.integration.test.ts`.
+- SeaweedFS 4.55 (lokal): **PASS** — 11/11 `media.integration.test.ts`.
+- Backend suite serial: **PASS** — 86 pass, 0 fail, 17 skip (103 total).
+- Admin build: **PASS**.
+- Android lint: **PASS** — 0 error, 28 warning; unit test 22/22; assemble debug + androidTest **PASS**.
+- Junk check: **PASS** — 0 suspect / 244 file.
+- Dependency audit backend/admin: **PASS** — 0 vulnerability.
+
+**Masih BLOCKED**
+
+- GitHub Actions: workflow ada, belum dieksekusi (tidak ada `gh` CLI / push belum dilakukan).
+- Emulator/device (`connectedDebugAndroidTest`): tidak ada emulator/adb.
+- PostgreSQL/PostGIS nyata: tidak terpasang; migrasi hanya terbukti di PGlite.
+- AWS S3 produksi: tidak diuji.
+- Notifikasi eksternal: tidak ada provider.
+- Moderasi otomatis eksternal: tidak ada provider.

@@ -69,18 +69,24 @@ class HazardViewModel @Inject constructor(
             uiState = uiState.copy(error = "Izin lokasi diperlukan untuk $action. Aktifkan izin lokasi lalu coba lagi.")
             return
         }
-        fused.lastLocation
-            .addOnSuccessListener { location ->
-                if (location == null) {
-                    uiState = uiState.copy(error = "Lokasi saat ini belum tersedia. Coba lagi di area terbuka.")
-                } else {
-                    lastLat = location.latitude
-                    lastLng = location.longitude
-                    uiState = uiState.copy(hasLocation = true, error = null)
-                    block(location.latitude, location.longitude)
+        // The runtime grant is checked above; the catch covers a permission
+        // revoked between that check and the call.
+        try {
+            fused.lastLocation
+                .addOnSuccessListener { location ->
+                    if (location == null) {
+                        uiState = uiState.copy(error = "Lokasi saat ini belum tersedia. Coba lagi di area terbuka.")
+                    } else {
+                        lastLat = location.latitude
+                        lastLng = location.longitude
+                        uiState = uiState.copy(hasLocation = true, error = null)
+                        block(location.latitude, location.longitude)
+                    }
                 }
-            }
-            .addOnFailureListener { uiState = uiState.copy(error = "Lokasi tidak dapat dibaca.") }
+                .addOnFailureListener { uiState = uiState.copy(error = "Lokasi tidak dapat dibaca.") }
+        } catch (_: SecurityException) {
+            uiState = uiState.copy(error = "Izin lokasi dicabut. Aktifkan izin lokasi lalu coba lagi.")
+        }
     }
 
     fun refresh() = withLocation("memuat bahaya di sekitar") { lat, lng -> load(lat, lng) }

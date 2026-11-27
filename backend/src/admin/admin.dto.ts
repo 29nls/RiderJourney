@@ -151,3 +151,61 @@ export class AuditQueryDto {
   @Max(100)
   limit?: number;
 }
+
+export class MediaQueueQueryDto {
+  @IsOptional()
+  @IsIn(['not_required', 'pending_review', 'approved', 'rejected', 'hidden'])
+  status?: 'not_required' | 'pending_review' | 'approved' | 'rejected' | 'hidden';
+
+  @IsOptional()
+  @IsIn(['post_photo', 'post_video', 'album_photo', 'album_video', 'poster', 'hazard_photo',
+    'avatar', 'vehicle_photo', 'community_logo', 'community_cover'])
+  purpose?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
+
+  @IsOptional()
+  @IsUUID('7')
+  before?: string;
+}
+
+export class MediaModerationDecisionDto {
+  @IsIn(['approve', 'reject', 'hide'])
+  action!: 'approve' | 'reject' | 'hide';
+
+  @IsOptional()
+  @IsString()
+  @Length(REASON.min, REASON.max)
+  reason?: string;
+}
+
+export class MediaReopenDto {
+  @IsString()
+  @Length(REASON.min, REASON.max)
+  reason!: string;
+}
+
+export class DeletionRetryDto {
+  @IsOptional()
+  @IsString()
+  @Length(REASON.min, REASON.max)
+  note?: string;
+}
+
+export class AlertQueryDto {
+  @IsOptional()
+  @IsIn(['active', 'resolved', 'all'])
+  status?: 'active' | 'resolved' | 'all';
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
+}

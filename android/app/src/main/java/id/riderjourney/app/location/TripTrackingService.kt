@@ -147,7 +147,7 @@ class TripTrackingService : Service() {
     }
 
     private fun createChannel() {
-        if (Build.VERSION.SDK_INT < 26) return
+        // minSdk is 26, so the channel API is always available.
         val manager = getSystemService(NotificationManager::class.java)
         if (manager.getNotificationChannel(CHANNEL_ID) == null) {
             manager.createNotificationChannel(

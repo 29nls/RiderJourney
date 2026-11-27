@@ -10,16 +10,17 @@ export type AdminPermission =
   | 'reports.read' | 'reports.act' | 'posts.read' | 'posts.moderate'
   | 'communities.read' | 'communities.moderate' | 'subscriptions.read'
   | 'subscriptions.manage' | 'redeem.manage' | 'config.read' | 'config.write'
-  | 'audit.read' | 'jobs.run' | 'billing.reconcile';
+  | 'audit.read' | 'jobs.run' | 'billing.reconcile'
+  | 'media.read' | 'media.moderate' | 'media.ops';
 
 const SUPPORT: AdminPermission[] = ['dashboard.read', 'users.read', 'reports.read', 'subscriptions.read', 'audit.read'];
 const MODERATOR: AdminPermission[] = [
   ...SUPPORT, 'users.suspend', 'reports.act', 'posts.read', 'posts.moderate',
-  'communities.read', 'communities.moderate',
+  'communities.read', 'communities.moderate', 'media.read', 'media.moderate',
 ];
 const ADMIN: AdminPermission[] = [
   ...MODERATOR, 'users.ban', 'subscriptions.manage', 'redeem.manage',
-  'config.read', 'config.write', 'jobs.run', 'billing.reconcile',
+  'config.read', 'config.write', 'jobs.run', 'billing.reconcile', 'media.ops',
 ];
 
 export function hasPermission(role: AdminRole, permission: AdminPermission): boolean {

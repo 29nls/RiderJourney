@@ -222,4 +222,32 @@ interface RiderJourneyApi {
 
     @POST("v1/hazards/{id}/report")
     suspend fun reportHazard(@Path("id") id: String, @Body request: HazardReportRequest)
+
+    // --- Media ---
+
+    @POST("v1/media/uploads")
+    suspend fun createUploadIntent(@Body request: CreateUploadRequest): UploadIntentResponse
+
+    @POST("v1/media/uploads/{id}/complete")
+    suspend fun completeUpload(@Path("id") id: String): UploadCompleteResponse
+
+    @GET("v1/media/{id}/url")
+    suspend fun getSignedUrl(@Path("id") id: String): SignedUrlResponse
+
+    @GET("v1/media/{id}/access")
+    suspend fun getMediaAccess(
+        @Path("id") id: String,
+        @Query("expires") expires: String,
+        @Query("signature") signature: String,
+    ): MediaAccessResponse
+
+    @GET("v1/media/quota")
+    suspend fun storageQuota(): StorageQuotaResponse
+
+    /**
+     * Deletion is asynchronous: the response reports 'deleting' and the bytes
+     * stay counted until the worker proves the object is gone.
+     */
+    @DELETE("v1/media/{id}")
+    suspend fun deleteMedia(@Path("id") id: String): DeleteMediaResponse
 }

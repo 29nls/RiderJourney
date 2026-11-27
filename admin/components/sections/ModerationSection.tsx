@@ -5,6 +5,7 @@ import { api, formatDate, query, shortId } from '@/lib/client';
 import type { CommunityItem, ListResponse, PostItem, RunAction } from '@/lib/types';
 import { useApi } from '@/lib/use-api';
 import { ActionForm, EmptyState, ErrorState, Field, Loading, StatusPill, TableWrap } from '../ui';
+import { MediaModerationPanel } from './MediaModerationPanel';
 
 type Props = {
   runAction: RunAction;
@@ -12,7 +13,7 @@ type Props = {
 };
 
 export function ModerationSection({ runAction, can }: Props) {
-  const [tab, setTab] = useState<'posts' | 'communities'>('posts');
+  const [tab, setTab] = useState<'posts' | 'communities' | 'media'>('posts');
   const [status, setStatus] = useState('');
   const [selectedPost, setSelectedPost] = useState<PostItem | null>(null);
   const [selectedCommunity, setSelectedCommunity] = useState<CommunityItem | null>(null);
@@ -23,7 +24,7 @@ export function ModerationSection({ runAction, can }: Props) {
   const posts = useApi<ListResponse<PostItem>>(`posts${query({ status, limit: 50 })}`);
   const communities = useApi<ListResponse<CommunityItem>>(`communities${query({ status, limit: 50 })}`);
 
-  function changeTab(next: 'posts' | 'communities') {
+  function changeTab(next: 'posts' | 'communities' | 'media') {
     setTab(next);
     setStatus('');
     setSelectedPost(null);
@@ -79,8 +80,14 @@ export function ModerationSection({ runAction, can }: Props) {
         <button type="button" role="tab" aria-selected={tab === 'communities'} className={tab === 'communities' ? 'tab active' : 'tab'} onClick={() => changeTab('communities')}>
           Komunitas
         </button>
+        <button type="button" role="tab" aria-selected={tab === 'media'} className={tab === 'media' ? 'tab active' : 'tab'} onClick={() => changeTab('media')}>
+          Media
+        </button>
       </div>
 
+      {tab === 'media' && <MediaModerationPanel runAction={runAction} can={can} />}
+
+      {tab !== 'media' && (
       <div className="filterBar">
         <Field label="Status">
           <select value={status} onChange={(event) => setStatus(event.target.value)}>
@@ -101,6 +108,7 @@ export function ModerationSection({ runAction, can }: Props) {
           </select>
         </Field>
       </div>
+      )}
 
       {tab === 'posts' && (
         <>
