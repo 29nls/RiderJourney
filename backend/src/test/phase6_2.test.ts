@@ -34,6 +34,7 @@ let quota: StorageQuotaService;
 let worker: MediaDeletionWorker;
 let A: { token: string; id: string };
 let B: { token: string; id: string };
+let signedMedia: string;
 
 const keyFrom = (uploadUrl: string) => new URL(uploadUrl).pathname.replace(/^\//, '');
 
@@ -365,7 +366,10 @@ test('reconciliation rebuilds reservations from the pending intents', async () =
 
 test('signed GET is scoped to the media, the key holder, and the expiry', async () => {
   const ready = await uploadImage(api, A.token, `p62_signed_${Date.now()}`);
-
+  signedMedia = ready.id;
+  // Phase 6.6 fail-closed: bytes need a finished, clean scan and a finished
+  // review (redemption is anonymous, so the owner exception cannot be used).
+  await db.query(`UPDATE media_assets SET scan_status = 'clean', moderation_status = 'approved' WHERE id = $1`, [ready.id]);
   const signed = await api.get(`/v1/media/${ready.id}/url`).set(auth(A.token));
   assert.equal(signed.status, 200, JSON.stringify(signed.body));
   assert.match(signed.body.url as string, /^\/v1\/media\/.+access\?expires=/);
@@ -383,6 +387,7 @@ test('signed GET is scoped to the media, the key holder, and the expiry', async 
   const otherMedia = await uploadImage(api, A.token, `p62_signed_other_${Date.now()}`);
   const crossUse = await api.get(`/v1/media/${otherMedia.id}/access?expires=${expires}&signature=${signature}`);
   assert.equal(crossUse.status, 401, JSON.stringify(crossUse.body));
+  // A wrong id fails the signature first; isolation is what this asserts.
   assert.equal(crossUse.body.code, 'SIGNED_URL_INVALID');
 
   const tampered = await api.get(`/v1/media/${ready.id}/access?expires=${expires}&signature=not-the-signature`);
@@ -397,7 +402,13 @@ test('an expired signed URL is refused even though its signature is valid', asyn
 
   // Mint a URL that lapsed ten seconds ago through the service itself.
   const media = app.get(MediaService);
+  // Phase 6.6 fail-closed: bytes need a finished, clean scan. No clamd runs in
+  // this harness, so a completed scan is modelled before the grant is minted.
+  // A row of their own: redemption is anonymous, so the owner exception of the
+  // first test does not apply, and a reviewed one would make this ambiguous.
+  await db.query(`UPDATE media_assets SET scan_status = 'clean' WHERE id = $1`, [ready.id]);
   const past = await media.signGet(A.id, ready.id, -10);
+  assert.ok(past.url, 'the mint itself is not gated by its own expiry');
   const response = await api.get(past.url);
   assert.equal(response.status, 401, JSON.stringify(response.body));
   assert.equal(response.body.code, 'SIGNED_URL_EXPIRED');

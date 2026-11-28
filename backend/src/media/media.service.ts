@@ -365,17 +365,46 @@ export class MediaService {
   }
 
   /**
+   * Bytes a browser may load. Scan has no exemption at all: a quarantined,
+   * unfinished, or failed scan withholds the file from everyone, admins and the
+   * uploader included. Moderation keeps the owner exception (a clean file still
+   * in review is theirs to look at); rejection and hiding remove it from the
+   * owner too. Signed redemption is anonymous, so it renders as a non-owner.
+   */
+  private static bytesServeable(row: { scan_status?: string | null; moderation_status: string; isOwner?: boolean }): boolean {
+    if ((row.scan_status ?? '') !== 'clean') return false;
+    if (row.moderation_status === 'approved' || row.moderation_status === 'not_required') return true;
+    if (row.moderation_status !== 'pending_review') return false;
+    return row.isOwner === true;
+  }
+
+  /**
    * Mint a short-lived GET grant. No storage key is exposed without a valid
    * signature, and the signature is bound to one media id and one expiry.
    */
   async signGet(userId: string, mediaId: string, ttlSeconds = this.config.mediaSignedUrlTtlSeconds) {
     const asset = await this.accessible(userId, mediaId);
-    const expires = Math.floor(Date.now() / 1000) + ttlSeconds;
-    const signature = this.signature(asset.id, expires);
-    return {
+    const isOwner = asset.owner_id === userId;
+    const scanStatus = asset.scan_status ?? '';
+    const modStatus = asset.moderation_status ?? '';
+    const blocked = scanStatus === 'quarantined' ? 'MEDIA_QUARANTINED' : scanStatus === 'scan_failed' ? 'MEDIA_SCAN_FAILED' : null;
+    const state = {
       id: asset.id,
       mimeType: asset.mime_type,
       sizeBytes: asset.size_bytes,
+      purpose: asset.purpose,
+      scanStatus,
+      moderationStatus: modStatus,
+      pendingReview: modStatus === 'pending_review',
+    };
+    if (!MediaService.bytesServeable({ ...asset, isOwner })) {
+      if (blocked) throw new ConflictException({ code: blocked, title: 'Media tidak disajikan', detail: `Status pemindaian: ${scanStatus}. Media yang tidak lolos pemindaian tidak disajikan.` });
+      return { ...state, url: null, blockedReason: 'MEDIA_NOT_READY' };
+    }
+    const expires = Math.floor(Date.now() / 1000) + ttlSeconds;
+    const signature = this.signature(asset.id, expires);
+    return {
+      ...state,
       expiresAt: new Date(expires * 1000).toISOString(),
       expiresIn: ttlSeconds,
       url: `/v1/media/${asset.id}/access?expires=${expires}&signature=${encodeURIComponent(signature)}`,
@@ -435,11 +464,18 @@ export class MediaService {
       throw new UnauthorizedException({ code: 'SIGNED_URL_INVALID', title: 'Tautan tidak valid', detail: 'Tanda tangan media tidak cocok.' });
     }
     const rows = await this.db.query<MediaAssetRow>(
-      `SELECT id, mime_type, size_bytes, object_key, purpose, status FROM media_assets
-       WHERE id = $1 AND status = 'ready'`,
+      `SELECT id, mime_type, size_bytes, object_key, purpose, status, scan_status, moderation_status
+       FROM media_assets WHERE id = $1 AND status = 'ready'`,
       [mediaId],
     );
     if (!rows[0]) throw new NotFoundException({ code: 'MEDIA_NOT_FOUND', title: 'Media tidak ditemukan', detail: 'Media tidak tersedia.' });
+    // Re-check the fail-closed state at redemption: a URL minted while the row
+    // was clean must not serve bytes that were quarantined or went back into
+    // review afterwards. The signature proves possession, not who the viewer
+    // is, so the owner-only pending_review exemption does not apply here.
+    if (!MediaService.bytesServeable({ ...rows[0], isOwner: false })) {
+      throw new UnauthorizedException({ code: 'SIGNED_URL_REVOKED', title: 'Tautan tidak berlaku', detail: 'Status media tidak lagi mengizinkan unduhan.' });
+    }
     const download = await this.storage.presignGet(rows[0].object_key, 60);
     return {
       id: rows[0].id,

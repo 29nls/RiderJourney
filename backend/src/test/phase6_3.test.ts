@@ -263,8 +263,11 @@ test('unscanned and quarantined media are refused to everyone but the owner', as
   assert.equal(unscannedRead.status, 404, 'unscanned media is not served as if it were clean');
 
   const ownerRead = await api.get(`/v1/media/${unscanned.id}/url`).set(auth(A.token));
-  assert.equal(ownerRead.status, 200, 'the owner can still see their own pending media');
-
+  // Phase 6.6: an unfinished scan is withheld from the uploader too. The owner
+  // still sees the row's metadata nearby; only the capability URL is absent.
+  assert.equal(ownerRead.status, 200, JSON.stringify(ownerRead.body));
+  assert.equal(ownerRead.body.url, null);
+  assert.equal(ownerRead.body.scanStatus, 'unscanned');
   await db.query(`UPDATE media_assets SET scan_status = 'clean' WHERE id = $1`, [unscanned.id]);
   const afterClean = await api.get(`/v1/media/${unscanned.id}/url`).set(auth(B.token));
   assert.equal(afterClean.status, 200, JSON.stringify(afterClean.body));
@@ -274,7 +277,8 @@ test('unscanned and quarantined media are refused to everyone but the owner', as
   assert.equal(quarantinedRead.status, 404, 'quarantine blocks public access');
 
   const ownerQuarantined = await api.get(`/v1/media/${unscanned.id}/url`).set(auth(A.token));
-  assert.equal(ownerQuarantined.status, 200);
+  assert.equal(ownerQuarantined.status, 409, 'quarantine is not an owner exemption');
+  assert.equal(ownerQuarantined.body.code, 'MEDIA_QUARANTINED');
 });
 
 test('the admin worker endpoint is closed to normal users and exposes no secrets', async () => {

@@ -139,19 +139,28 @@ test('signed URLs gate private media by access and expiry', async () => {
   assert.equal(post.status, 201, JSON.stringify(post.body));
 
   assert.equal((await api.get(`/v1/media/${privateMedia}/url`).set(auth(B.token))).status, 404);
+  // Phase 6.6 fail-closed: private posts are moderated, so the owner gets a URL
+  // only once the scan is clean, and anonymous redemption waits for the
+  // reviewer. Both gates are covered in phase6_6.test.ts; here the rest of the
+  // signed-URL rules (scope, tamper, expiry, instr, public share) are checked.
   const signed = await api.get(`/v1/media/${privateMedia}/url`).set(auth(A.token));
   assert.equal(signed.status, 200, JSON.stringify(signed.body));
-  const served = await api.get(signed.body.url);
+  assert.equal(signed.body.url, null, 'unscanned private media has no bytes yet');
+  await db.query(`UPDATE media_assets SET scan_status = 'clean', moderation_status = 'approved' WHERE id = $1`, [privateMedia]);
+  const granted = await api.get(`/v1/media/${privateMedia}/url`).set(auth(A.token));
+  assert.equal(granted.status, 200, JSON.stringify(granted.body));
+  const served = await api.get(granted.body.url);
   assert.equal(served.status, 200, JSON.stringify(served.body));
   assert.equal(served.body.id, privateMedia);
 
-  const tampered = await api.get(signed.body.url.replace(/signature=[^&]+$/, 'signature=deadbeef'));
+  const tampered = await api.get((granted.body.url as string).replace(/signature=[^&]+$/, 'signature=deadbeef'));
   assert.equal(tampered.status, 401);
   assert.equal(tampered.body.code, 'SIGNED_URL_INVALID');
 
   const mediaService = app.get(MediaService);
   const expired = await mediaService.signGet(A.id, privateMedia, -1);
-  const expiredResponse = await api.get(expired.url);
+  assert.ok(expired.url, 'private media of its own owner still mints a URL');
+  const expiredResponse = await api.get(expired.url as string);
   assert.equal(expiredResponse.status, 401);
   assert.equal(expiredResponse.body.code, 'SIGNED_URL_EXPIRED');
 

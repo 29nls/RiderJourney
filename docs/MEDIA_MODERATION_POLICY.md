@@ -53,10 +53,41 @@ Other users can fetch a media URL only when **all** of these hold:
 3. `moderation_status IN ('approved', 'not_required')`.
 4. The existing audience rule for the parent post, album, or trip passes.
 
-The owner always sees their own media metadata and can fetch their own file,
-subject to the same `ready` requirement. A quarantined file is not served as a
-download to anyone, including admins: the reviewer preview endpoint refuses to
-mint a URL unless `scan_status = 'clean'`.
+The owner always sees their own media metadata, subject to the same `ready`
+requirement.
+
+A quarantined file is not served as a download to anyone, including admins and
+the uploader: the fetch endpoint answers `409 MEDIA_QUARANTINED`
+(`409 MEDIA_SCAN_FAILED` for a failed scan), and the reviewer preview endpoint
+refuses to mint a URL unless `scan_status = 'clean'`. Rejected and hidden media
+are `404` for everyone but reviewers.
+
+## Download gate
+
+Rule of delivery is one function, `bytesServeable`, and it is fail-closed:
+
+| `scan_status` | `moderation_status` | owner | anyone else |
+| --- | --- | --- | --- |
+| `clean` | `approved`, `not_required` | yes | yes |
+| `clean` | `pending_review` | yes | no — `url: null`, `pendingReview: true` |
+| `clean` | `rejected`, `hidden` | no — `409` | no — `404` (no metadata leak) |
+| anything else | any | no — `409` / `404` | no |
+
+Signed capability URLs are anonymous: the signature proves possession, not who
+the viewer is (`GET /v1/media/:id/access` takes only `expires` and `signature`).
+`scan_status` and `moderation_status` are therefore applied twice: once when
+the URL is minted, to the column of the signed-in caller, and once when the URL
+is redeemed, always to the non-owner column. A link minted from a row that was
+clean and approved at the time answers `401 SIGNED_URL_REVOKED` as soon as a
+scan or review stops permitting the download.
+
+What this means in practice: a clean file still in review gets a working URL
+from its owner, and that URL works for whoever holds it, because a capability
+link cannot tell the uploader's browser from a stranger's. The fail-closed
+anchor is the owner-only exemption (item 2 above): a `pending_review` file
+that is not `clean` never mints a URL in the first place. Serving a clean
+`pending_review` file by link is a deliberate, documented narrowing, not an
+inadvertent bypass; anyone without the link only gets `404`.
 
 Consequence worth stating plainly: **without a scanner, nothing can be shared**
 (`unscanned` never matches `clean`), and **without a reviewer, community content

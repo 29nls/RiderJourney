@@ -13,6 +13,7 @@ import id.riderjourney.app.data.api.RiderJourneyApi
 import id.riderjourney.app.data.api.SignedUrlResponse
 import id.riderjourney.app.data.local.MediaUploadDao
 import id.riderjourney.app.data.local.MediaUploadEntity
+import id.riderjourney.app.work.MediaUploadWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -50,6 +51,10 @@ class MediaRepository @Inject constructor(
     companion object {
         private const val MAX_RETRIES = 3
         private const val MAX_IMAGE_BYTES = 12 * 1024 * 1024
+
+        /** User-cancelled uploads stay cancelled; the rest are resumable while retries remain. */
+        internal fun resumable(upload: MediaUploadEntity): Boolean =
+            upload.state != "cancelled" && upload.retryCount < MAX_RETRIES
     }
 
     private val imageCache = LruCache<String, Bitmap>(12)
@@ -92,7 +97,7 @@ class MediaRepository @Inject constructor(
         localId = UUID.randomUUID().toString(),
         retryCount = 0,
         onProgress = onProgress,
-    )
+    ).onFailure { MediaUploadWorker.enqueue(context) }
 
     /**
      * Resume a failed/interrupted upload. Always re-issues the intent with the
@@ -227,6 +232,13 @@ class MediaRepository @Inject constructor(
     }
 
     suspend fun pendingUploads(): List<MediaUploadEntity> = dao.pendingUploads()
+
+    /**
+     * Work the background retry may touch: the same rows the pending pane shows,
+     * minus what the user cancelled and minus what already used its retries.
+     */
+    suspend fun resumableUploads(): List<MediaUploadEntity> =
+        dao.pendingUploads().filter(::resumable)
 
     /** Get a signed capability URL for display. */
     suspend fun getSignedUrl(mediaId: String): Result<SignedUrlResponse> = runCatching {

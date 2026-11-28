@@ -39,12 +39,11 @@ class MediaUploadWorker @AssistedInject constructor(
     }
 
     override suspend fun doWork(): Result {
-        val pending = mediaRepository.pendingUploads()
+        val pending = mediaRepository.resumableUploads()
         if (pending.isEmpty()) return Result.success()
 
         var allOk = true
         for (upload in pending) {
-            if (upload.state == "cancelled") continue
             val result = mediaRepository.retry(upload.id)
             if (result.isFailure) allOk = false
         }
