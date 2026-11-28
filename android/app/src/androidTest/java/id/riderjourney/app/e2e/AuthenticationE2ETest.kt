@@ -1,6 +1,7 @@
 package id.riderjourney.app.e2e
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import id.riderjourney.app.data.ApiException
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -87,7 +88,10 @@ class AuthenticationE2ETest {
 
         val result = E2e.block { E2e.graph.authRepository().session() }
         assertTrue("session must fail without credentials", result.isFailure)
-        val message = result.exceptionOrNull()?.message.orEmpty()
-        assertTrue("failure names the HTTP rejection, was: $message", message.contains("401") || message.contains("Unauthorized"))
+        val error = result.exceptionOrNull()
+        assertTrue(
+            "the backend rejection is surfaced as UNAUTHENTICATED, was: $error",
+            error is ApiException && error.code == "UNAUTHENTICATED",
+        )
     }
 }

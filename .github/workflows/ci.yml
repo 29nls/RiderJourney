@@ -394,15 +394,17 @@ jobs:
           # NODE_ENV=test disables the HTTP throttler so 26 tests creating their
           # own accounts are not answered with 429.
           NODE_ENV=test HOST=0.0.0.0 PORT=3000 nohup node backend/dist/main.js > /tmp/backend.log 2>&1 &
+          # /health/ready is the endpoint that actually touches PostgreSQL and
+          # PostGIS, so a 200 here means the schema the tests need is usable.
           for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:3000/health > /dev/null 2>&1; then
+            if curl -fsS http://127.0.0.1:3000/health/ready > /dev/null 2>&1; then
               echo 'api ready'
-              curl -fsS http://127.0.0.1:3000/health
+              curl -fsS http://127.0.0.1:3000/health/ready
               exit 0
             fi
             sleep 1
           done
-          echo '::error::API never answered /health'
+          echo '::error::API never answered /health/ready'
           tail -60 /tmp/backend.log
           exit 1
       - name: Create artifact directory
