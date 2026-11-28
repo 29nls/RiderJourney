@@ -254,61 +254,39 @@ jobs:
           ls -l /dev/kvm
           (test -r /dev/kvm && echo 'kvm-readable-after-fix: yes') || echo 'kvm-readable-after-fix: no'
           (test -w /dev/kvm && echo 'kvm-writable-after-fix: yes') || echo 'kvm-writable-after-fix: no'
-      - name: Install emulator and API 34 image
-        run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
-            'platform-tools' 'emulator' 'system-images;android-34;google_apis;x86_64'
-          echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
-          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
-          "$ANDROID_HOME/emulator/emulator" -version 2>&1 | head -4
-          adb version
-      - name: Accel check
-        run: |
-          "$ANDROID_HOME/emulator/emulator" -accel-check
-      - name: Boot attempt with hardware acceleration
-        env:
-          ANDROID_AVD_HOME: ${{ runner.temp }}/avd
-        run: |
-          set -u
-          mkdir -p "$ANDROID_AVD_HOME"
-          echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
-            --force -n test --package 'system-images;android-34;google_apis;x86_64'
-          cp "$ANDROID_AVD_HOME/test.avd/config.ini" "$RUNNER_TEMP/avd-config.ini"
-          # No -accel off, no TCG: hardware acceleration or a visible failure.
-          nohup "$ANDROID_HOME/emulator/emulator" -port 5554 -avd test \
-            -accel on -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim \
-            > "$RUNNER_TEMP/emulator.log" 2>&1 &
-          booted=0
-          for i in $(seq 1 90); do
-            if [ "$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
-              booted=1
-              echo 'boot: completed'
-              break
-            fi
-            if ! kill -0 $! 2>/dev/null; then
-              echo 'boot: emulator process exited'
-              break
-            fi
-            sleep 4
-          done
-          adb devices -l
-          adb -s emulator-5554 shell getprop ro.build.version.sdk || true
-          adb -s emulator-5554 shell getprop sys.boot_completed || true
-          adb -s emulator-5554 shell getprop ro.kernel.qemu.avd_name || true
-          if [ "$booted" != "1" ]; then
-            echo '::error::emulator never reached sys.boot_completed=1'
-            tail -60 "$RUNNER_TEMP/emulator.log" || true
-            exit 1
-          fi
-          adb -s emulator-5554 emu kill || true
+      - name: Boot attempt with hardware acceleration (API 34)
+        # The action installs the SDK, creates the AVD, launches the emulator and
+        # waits for sys.boot_completed. `disable-linux-hw-accel: false` is the
+        # whole point: it stops the action from appending `-accel off` when the
+        # /dev/kvm access check fails, so a non-bootable runner fails loudly
+        # instead of silently degrading to software emulation.
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-linux-hw-accel: false
+          emulator-boot-timeout: 600
+          script: |
+            set -u
+            echo "== devices =="            | tee "$RUNNER_TEMP/boot-proof.txt"
+            adb devices -l                 | tee -a "$RUNNER_TEMP/boot-proof.txt"
+            echo "== props =="              | tee -a "$RUNNER_TEMP/boot-proof.txt"
+            adb shell getprop sys.boot_completed | tee -a "$RUNNER_TEMP/boot-proof.txt"
+            adb shell getprop ro.build.version.sdk | tee -a "$RUNNER_TEMP/boot-proof.txt"
+            adb shell getprop ro.product.cpu.abi | tee -a "$RUNNER_TEMP/boot-proof.txt"
+            adb shell getprop ro.kernel.qemu | tee -a "$RUNNER_TEMP/boot-proof.txt"
+            test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
+      - name: Copy AVD config
+        if: always()
+        run: cp "$HOME/.android/avd/test.avd/config.ini" "$RUNNER_TEMP/avd-config.ini" || true
       - name: Upload emulator evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: emulator-capability-evidence
           path: |
-            ${{ runner.temp }}/emulator.log
+            ${{ runner.temp }}/boot-proof.txt
             ${{ runner.temp }}/avd-config.ini
           if-no-files-found: warn
 
