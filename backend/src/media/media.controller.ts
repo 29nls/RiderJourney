@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Query, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Post, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { UuidParamPipe } from '../common/uuid.pipe.js';
@@ -6,6 +6,7 @@ import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { UserRow } from '../auth/auth.types.js';
 import { CreateUploadDto } from './media.dto.js';
 import { MediaService } from './media.service.js';
+import { StorageQuotaService } from './storage-quota.js';
 
 /**
  * Signed GET is intentionally unauthenticated: the signature is the capability.
@@ -33,7 +34,10 @@ export class MediaAccessController {
 @Controller('v1/media')
 @UseGuards(AuthGuard)
 export class MediaController {
-  constructor(private readonly media: MediaService) {}
+  constructor(
+    private readonly media: MediaService,
+    private readonly quota: StorageQuotaService,
+  ) {}
 
   @Post('uploads')
   @HttpCode(201)
@@ -55,5 +59,33 @@ export class MediaController {
   @Get(':id/url')
   signed(@CurrentUser() user: UserRow, @Param('id', UuidParamPipe) id: string) {
     return this.media.signGet(user.id, id);
+  }
+
+  /** Returns current storage quota usage for the authenticated user. */
+  @Get('quota')
+  storageQuota(@CurrentUser() user: UserRow) {
+    return this.quota.getQuota(user.id);
+  }
+
+  /**
+   * Deletion marks the row 'deleting' and enqueues the object; the quota only
+   * shrinks once the worker has confirmed the bytes are gone. A media still
+   * referenced by a post, album, trip, poster, hazard, avatar, or vehicle
+   * answers 409 MEDIA_IN_USE instead of being removed.
+   */
+  @Delete(':id')
+  @HttpCode(200)
+  remove(@CurrentUser() user: UserRow, @Param('id', UuidParamPipe) id: string) {
+    return this.media.requestDeletion(user.id, id);
+  }
+
+  /**
+   * Cancellation is only honest before the worker claims the job. Afterwards
+   * the object may already be gone, so the answer is a conflict, not a promise.
+   */
+  @Post(':id/cancel-deletion')
+  @HttpCode(200)
+  cancelDeletion(@CurrentUser() user: UserRow, @Param('id', UuidParamPipe) id: string) {
+    return this.media.cancelDeletion(user.id, id);
   }
 }

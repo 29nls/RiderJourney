@@ -241,7 +241,7 @@ export class AlbumsService {
       await tx.query(
         `UPDATE media_assets SET album_id = $2, sort_index = $3, caption = $4, taken_at = $5,
            width = $6, height = $7, duration_s = $8,
-           moderation_status = CASE WHEN $9::uuid IS NULL THEN 'approved' ELSE 'pending' END
+           moderation_status = CASE WHEN $9::uuid IS NULL THEN 'approved' ELSE 'pending_review' END
          WHERE id = $1`,
         [
           dto.mediaId, albumId, dto.sortIndex ?? position[0]?.next ?? 0, dto.caption ?? null,

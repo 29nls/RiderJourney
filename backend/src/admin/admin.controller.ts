@@ -6,10 +6,16 @@ import { AuthGuard } from '../auth/auth.guard.js';
 import { AdminGuard, AdminStepUpGuard, type AdminRequest } from './admin.guard.js';
 import { AdminService } from './admin.service.js';
 import { AdminStepUpService } from './step-up.service.js';
+import { MediaDeletionWorker } from '../media/deletion-outbox.js';
+import { MediaScanWorker } from '../media/scan-worker.js';
+import { UploadCleanupService } from '../media/upload-cleanup.js';
+import { StorageQuotaService } from '../media/storage-quota.js';
 import type { AdminActor } from './admin.types.js';
 import {
-  AuditQueryDto, CommunityModerationDto, ConfirmMfaDto, CreateRedeemDto, GrantSubscriptionDto,
-  ListQueryDto, PostModerationDto, RedeemActionDto, ResolveReportDto, UpdateConfigDto, UserStatusDto,
+  AlertQueryDto, AuditQueryDto, CommunityModerationDto, ConfirmMfaDto, CreateRedeemDto,
+  DeletionRetryDto, GrantSubscriptionDto, ListQueryDto, MediaModerationDecisionDto,
+  MediaQueueQueryDto, MediaReopenDto, PostModerationDto, RedeemActionDto, ResolveReportDto,
+  UpdateConfigDto, UserStatusDto,
 } from './admin.dto.js';
 
 @Controller('v1/admin')
@@ -18,6 +24,10 @@ export class AdminController {
   constructor(
     private readonly admin: AdminService,
     private readonly mfa: AdminStepUpService,
+    private readonly deletionWorker: MediaDeletionWorker,
+    private readonly uploadCleanup: UploadCleanupService,
+    private readonly storageQuota: StorageQuotaService,
+    private readonly scanWorker: MediaScanWorker,
   ) {}
 
   private actor(req: AdminRequest): AdminActor {
@@ -53,6 +63,98 @@ export class AdminController {
   @Get('dashboard')
   dashboard(@Req() req: AdminRequest) {
     return this.admin.dashboard(this.actor(req));
+  }
+
+  /**
+   * Read-only storage worker health. Shows queue depth, dead-letter count,
+   * oldest pending age, last success/failure and a health word. Object keys,
+   * signed URLs, credentials and user metadata are deliberately absent.
+   */
+  @Get('media/workers')
+  async mediaWorkers() {
+    return {
+      deletion: await this.deletionWorker.health(),
+      uploadCleanup: this.uploadCleanup.status(),
+      scanning: await this.scanWorker.status(),
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // Media moderation queue. Malware state is reported alongside but is never
+  // changed by a review decision.
+  // -------------------------------------------------------------------------
+  @Get('media/moderation')
+  mediaModeration(@Req() req: AdminRequest, @Query() query: MediaQueueQueryDto) {
+    return this.admin.mediaModerationQueue(this.actor(req), query);
+  }
+
+  @Get('media/moderation/:id/preview')
+  mediaPreview(@Req() req: AdminRequest, @Param('id') id: string) {
+    return this.admin.mediaPreview(this.actor(req), id);
+  }
+
+  @Get('media/moderation/:id/history')
+  mediaModerationHistory(@Req() req: AdminRequest, @Param('id') id: string) {
+    return this.admin.mediaModerationHistory(this.actor(req), id);
+  }
+
+  @Post('media/moderation/:id/decision')
+  @HttpCode(200)
+  @UseGuards(AdminStepUpGuard)
+  decideMedia(
+    @Req() req: AdminRequest,
+    @Param('id') id: string,
+    @Body() dto: MediaModerationDecisionDto,
+  ) {
+    return this.admin.moderateMedia(this.actor(req), id, dto.action, dto.reason, req.requestId);
+  }
+
+  @Post('media/moderation/:id/reopen')
+  @HttpCode(200)
+  @UseGuards(AdminStepUpGuard)
+  reopenMedia(@Req() req: AdminRequest, @Param('id') id: string, @Body() dto: MediaReopenDto) {
+    return this.admin.reopenMedia(this.actor(req), id, dto.reason, req.requestId);
+  }
+
+  // -------------------------------------------------------------------------
+  // Deletion operations: dead-letter inspection, operator retry, and stale
+  // recovery. Object keys are never returned.
+  // -------------------------------------------------------------------------
+  @Get('media/deletions/failed')
+  deletionFailed(@Req() req: AdminRequest, @Query('limit') limit?: string) {
+    return this.admin.deletionFailed(this.actor(req), limit ? Number(limit) : undefined);
+  }
+
+  @Post('media/deletions/:id/retry')
+  @HttpCode(200)
+  @UseGuards(AdminStepUpGuard)
+  retryDeletion(@Req() req: AdminRequest, @Param('id') id: string, @Body() dto: DeletionRetryDto) {
+    return this.admin.retryDeletion(this.actor(req), id, dto.note, req.requestId);
+  }
+
+  @Post('media/deletions/reconcile')
+  @HttpCode(200)
+  @UseGuards(AdminStepUpGuard)
+  reconcileDeletions(@Req() req: AdminRequest) {
+    return this.admin.reconcileDeletions(this.actor(req), req.requestId);
+  }
+
+  @Get('media/alerts')
+  mediaAlerts(@Req() req: AdminRequest, @Query() query: AlertQueryDto) {
+    return this.admin.alertEvents(this.actor(req), query);
+  }
+
+  @Post('media/alerts/evaluate')
+  @HttpCode(200)
+  evaluateAlerts(@Req() req: AdminRequest) {
+    return this.admin.evaluateAlerts(this.actor(req));
+  }
+
+  /** Recompute one user's quota reservation from its pending upload intents. */
+  @Post('media/quota/:userId/reconcile')
+  @HttpCode(200)
+  reconcileQuota(@Param('userId') userId: string) {
+    return this.storageQuota.reconcile(userId);
   }
 
   @Get('users')

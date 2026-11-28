@@ -224,3 +224,136 @@ Batasan keamanan yang masih terbuka:
 - Respons galat tidak memuat nama bucket, key, atau pesan dari storage; kode galat stabil (`MEDIA_OBJECT_MISSING`, `MEDIA_SIZE_MISMATCH`, `MEDIA_CHECKSUM_MISMATCH`, dan seterusnya).
 
 Yang belum diverifikasi: bucket policy produksi AWS (Block Public Access, TLS, IAM least-privilege), masa retensi objek `pending` yang ditinggalkan klien, dan pemindaian malware.
+
+## 19. Storage lifecycle — audit Phase 6.2
+
+### 19.1 Kredensial storage
+
+Backend memakai kredensial statis dari environment
+(`MEDIA_S3_ACCESS_KEY`, `MEDIA_S3_SECRET_KEY`) dan tidak pernah mengirimkannya ke
+Android. Android hanya menerima presigned URL berumur pendek.
+
+Temuan: kredensial statis adalah **known limitation**, bukan PASS untuk
+production. Yang dibutuhkan sebelum production:
+
+- IAM policy least privilege per bucket/prefix (`PutObject`, `GetObject`,
+  `HeadObject`, `DeleteObject` pada `media/*` saja; tanpa `ListBucket` global).
+- Bucket policy yang menolak akses anonim dan menolak `aws:SecureTransport = false`.
+- Server-side encryption (SSE-S3 atau SSE-KMS) diaktifkan pada bucket.
+- Rotasi kredensial, atau sesi sementara STS bila backend dapat memakainya.
+
+Adapter `createObjectStorage()` memakai klien AWS SDK, sehingga kredensial
+sementara/role-based dapat dipakai tanpa mengubah kode bila environment
+menyediakannya. Semua ini **belum diuji terhadap AWS nyata**.
+
+### 19.2 Akses unduh
+
+| Pemeriksaan | Hasil |
+| --- | --- |
+| Endpoint `/access` butuh autentikasi? | Tidak — capability URL, sesuai desain |
+| Ownership divalidasi? | Ya, sebelum URL diterbitkan (`/url`) dan saat verifikasi baris |
+| Visibilitas media? | Post/album/trip/follow/community + purpose bersama (`avatar`, `vehicle_photo`, dst.) |
+| URL dapat dibagikan? | Ya, sampai `expires` (default 300 detik) — diterima sebagai capability |
+| URL bocor lewat log? | Log request hanya mencatat `path`, bukan query string penuh |
+| Expiration ditegakkan? | Ya — `401 SIGNED_URL_EXPIRED`; presigned GET turunan hanya 60 detik |
+
+Catatan: `media_assets` tidak memiliki `deleted_at`; penghapusan mengubah status
+sehingga signature lama berhenti bekerja karena baris harus `ready`.
+
+### 19.3 Media yang belum dipindai
+
+Tidak ada provider malware/CSAM/moderation. Media tetap `unscanned` dan
+`NoOpMediaScanner.available()` selalu `false`. Media `unscanned` **tidak**
+ditampilkan sebagai sudah aman, dan tombol "lapor" tetap menjadi kontrol utama.
+Kebijakan moderasi (auto-quarantine, rescan) belum dapat dijalankan.
+
+## 20. Penghapusan media, kuota, dan scanning (Phase 6.3)
+
+### 20.1 Otorisasi penghapusan
+
+| Pemeriksaan | Implementasi |
+| --- | --- |
+| Autentikasi | `AuthGuard` pada seluruh `MediaController` |
+| Kepemilikan | `WHERE id = $1 AND owner_id = $2`; pemilik lain mendapat `404`, bukan `403`, agar keberadaan media tidak bocor |
+| Referensi aktif | `referencesOf()` memeriksa 8 tabel + keanggotaan album sebelum izin diberikan |
+| Idempotensi | Status `deleting`/`deleted` mengembalikan `duplicate: true` tanpa enqueue kedua |
+| Race | CAS `status = 'ready'` di dalam transaksi yang sama dengan insert outbox |
+
+Media yang masih dipakai post, album, trip, poster, hazard, avatar, atau
+kendaraan **tidak dapat dihapus**. Penggantian avatar/foto kendaraan memakai
+transaksi: pointer dilepas dulu, referensi dihitung ulang, baru media lama
+dijadwalkan hapus. Ini mencegah penghapusan foto yang dipakai di tempat lain.
+
+### 20.2 Akuntansi kuota (anti double-counting)
+
+Satu aturan dipakai di baca, reservasi, dan rekonsiliasi:
+
+- `pending` → `reservedBytes`
+- `ready` dan `deleting` → `usedBytes`
+- `expired`, `rejected`, `deleted` → tidak dihitung
+
+Konsekuensinya, **permintaan hapus tidak membebaskan kuota**. Ruang baru kembali
+setelah worker memverifikasi objek hilang (`HEAD` setelah `delete`) dan baris
+menjadi `deleted`. Tidak ada kolom `used_bytes` yang ditulis manual, sehingga
+tidak ada pembukuan ganda yang bisa menyimpang.
+
+### 20.3 Scanning dan karantina
+
+- Scanner malware (`ClamAV`) dan moderasi konten adalah dua hal berbeda;
+  ClamAV **tidak** mendeteksi CSAM dan tidak menggantikan moderasi. Moderasi
+  masih BLOCKED karena belum ada provider.
+- Scanner yang tidak tersedia atau gagal tidak pernah menghasilkan `clean`.
+  `NoOpMediaScanner.available()` selalu `false`.
+- Media `quarantined` tidak dapat diakses pengguna lain; pemilik masih dapat
+  melihatnya.
+- Kebijakan publik fail-closed: pengguna lain hanya menerima media
+  `scan_status = 'clean'`. Media `unscanned` juga ditolak, sehingga tidak ada
+  media yang tampil ke publik hanya karena belum dipindai.
+
+### 20.4 Endpoint admin
+
+`GET /v1/admin/media/workers` memakai `AuthGuard` + `AdminGuard`. Response hanya
+berisi angka antrean, waktu, dan pesan error yang dipotong 300 karakter. Object
+key, presigned URL, kredensial storage, dan metadata pengguna tidak dikembalikan.
+
+## 21. Reliability, moderasi, dan alerting (Phase 6.4)
+
+**Fail-closed dipertahankan.** Tidak ada jalur yang menandai media `clean` tanpa
+hasil scanner, dan tidak ada jalur yang menyajikan media `quarantined` sebagai
+unduhan — termasuk endpoint pratinjau admin, yang menolak (`409`) bila
+`scan_status !== 'clean'`. Reviewer melihat metadata dan alasan blokir, bukan
+file berbahaya.
+
+**Pemisahan wewenang.** Scanner hanya menulis `scan_status*`; reviewer hanya
+menulis `moderation_status*`. `media_moderation_log` mencatat aktor, alasan, dan
+transisi status; `admin_audit_logs` mencatat `media.approve`, `media.reject`,
+`media.hide`, `media.reopen`, `media.deletion.retry`, dan
+`media.deletion.reconcile`. Keduanya append-only dalam praktik.
+
+**Izin baru.** `media.read` (antrean, riwayat, pratinjau, alert) untuk moderator
+ke atas; `media.moderate` untuk moderator ke atas; `media.ops` hanya admin dan
+superadmin. `support` sengaja tidak dapat membaca antrean karena isinya konten
+pengguna yang belum ditinjau. Regresi diuji di `phase6_4.test.ts`.
+
+**Pembatalan penghapusan.** Pembatalan memakai `FOR UPDATE` pada baris media dan
+outbox, sehingga tidak ada balapan dengan klaim worker. Setelah klaim, atau
+setelah objek hilang, permintaan ditolak. Ini mencegah janji palsu "dibatalkan"
+atas objek yang sudah tiada.
+
+**Alerting tanpa kebocoran.** `ops_alert_events.details` hanya memuat angka,
+nama kind, dan pesan galat storage yang sudah dipotong. Tidak ada object key,
+URL bertanda tangan, token, atau kredensial. Endpoint alert tidak memerlukan
+step-up karena hanya membaca.
+
+**Backup Android.** `android:allowBackup="false"` dipertahankan, ditambah
+`dataExtractionRules` yang mengecualikan seluruh `sharedpref` dari cloud backup
+maupun device transfer, agar token sesi tidak ikut tersalin ke perangkat lain.
+
+**Catatan privasi moderasi.** Antrean moderasi menampilkan `ownerId` (UUID),
+bukan email atau nama. Preview memakai URL berumur 120 detik.
+
+## Status verifikasi (PHASE 6.5)
+
+- Dependency audit backend/admin: PASS (0 vulnerability).
+- Karantina EICAR tidak dapat diakses pengguna lain: PASS (terbukti).
+- Notifikasi eksternal: BLOCKED (tidak ada provider).

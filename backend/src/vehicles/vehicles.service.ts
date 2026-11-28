@@ -1,8 +1,9 @@
-import { ConflictException, Inject, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, NotFoundException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
 import { v7 as uuidv7 } from 'uuid';
 import { APP_CONFIG, type AppConfig } from '../config/env.js';
 import { DATABASE, type Database } from '../db/database.js';
 import { PlanService } from '../entitlements/plan.service.js';
+import { MediaService } from '../media/media.service.js';
 import { decryptValue, encryptValue } from '../common/crypto.js';
 import type { CreateVehicleDto, UpdateVehicleDto } from './vehicles.dto.js';
 
@@ -16,6 +17,7 @@ type VehicleRow = {
   engine_cc: number | null;
   nickname: string | null;
   photo_url: string | null;
+  photo_media_id: string | null;
   plate_ciphertext: Buffer | null;
   plate_iv: Buffer | null;
   plate_tag: Buffer | null;
@@ -35,6 +37,7 @@ function baseDto(row: VehicleRow) {
     engineCc: row.engine_cc,
     nickname: row.nickname,
     photoUrl: row.photo_url,
+    photoMediaId: row.photo_media_id,
     isPrimary: row.is_primary,
     hasPlate: Boolean(row.plate_ciphertext),
     createdAt: new Date(row.created_at).toISOString(),
@@ -48,6 +51,7 @@ export class VehiclesService {
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     @Inject(DATABASE) private readonly db: Database,
     private readonly plans: PlanService,
+    private readonly media: MediaService,
   ) {}
 
   private encryptPlate(plate: string) {
@@ -110,6 +114,10 @@ export class VehiclesService {
         ],
       );
     });
+    // Reuse the same purpose/ownership validation as update().
+    if (dto.photoMediaId) {
+      return this.update(ownerId, id, { photoMediaId: dto.photoMediaId });
+    }
     return baseDto(await this.row(ownerId, id));
   }
 
@@ -157,10 +165,49 @@ export class VehiclesService {
         sets.push(`plate_key_version = $${values.length}`);
       }
     }
-    if (sets.length > 0) {
-      values.push(id);
-      await this.db.query(`UPDATE vehicles SET ${sets.join(', ')}, updated_at = now() WHERE id = $${values.length}`, values);
+    // The pointer being replaced is read first so it can be evaluated for
+    // deletion in the same transaction that detaches it.
+    let previousPhoto: string | null = null;
+    if (dto.photoMediaId !== undefined) {
+      const current = await this.db.query<{ photo_media_id: string | null }>(
+        `SELECT photo_media_id FROM vehicles WHERE id = $1 AND owner_id = $2`,
+        [id, ownerId],
+      );
+      previousPhoto = current[0]?.photo_media_id ?? null;
     }
+    // Handle photoMediaId linkage.
+    if (dto.photoMediaId !== undefined) {
+      if (dto.photoMediaId === '') {
+        values.push(null);
+        sets.push(`photo_media_id = $${values.length}`);
+      } else {
+        const media = await this.db.query<{ id: string }>(
+          `SELECT id FROM media_assets WHERE id = $1 AND owner_id = $2 AND status = 'ready' AND purpose = 'vehicle_photo'`,
+          [dto.photoMediaId, ownerId],
+        );
+        if (!media[0]) {
+          throw new UnprocessableEntityException({
+            code: 'MEDIA_NOT_ATTACHABLE',
+            title: 'Media tidak dapat digunakan',
+            detail: 'Foto kendaraan harus berupa media yang sudah selesai diunggah dengan purpose vehicle_photo.',
+          });
+        }
+        values.push(dto.photoMediaId);
+        sets.push(`photo_media_id = $${values.length}`);
+      }
+    }
+    const nextPhoto = dto.photoMediaId === undefined ? undefined : dto.photoMediaId === '' ? null : dto.photoMediaId;
+    await this.db.transaction(async (tx) => {
+      if (sets.length > 0) {
+        values.push(id);
+        await tx.query(`UPDATE vehicles SET ${sets.join(', ')}, updated_at = now() WHERE id = $${values.length}`, values);
+      }
+      // Only an asset that nothing else points at is enqueued; a photo reused by
+      // another vehicle stays put.
+      if (nextPhoto !== undefined && previousPhoto && previousPhoto !== nextPhoto) {
+        await this.media.detachAndRelease(tx, ownerId, previousPhoto, 'vehicle_photo_replaced');
+      }
+    });
     return this.get(ownerId, id, false);
   }
 

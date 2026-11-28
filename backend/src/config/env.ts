@@ -65,6 +65,23 @@ export type AppConfig = {
   adminStepUpTtlSeconds: number;
   exportTtlDays: number;
   deletionGraceDays: number;
+  mediaQuotaBytesDefault: number;
+  mediaDeletionPollSeconds: number;
+  mediaDeletionBatchSize: number;
+  mediaUploadCleanupIntervalSeconds: number;
+  mediaScanner: string;
+  clamavHost: string;
+  clamavPort: number;
+  clamavTimeoutMs: number;
+  mediaScanMaxAttempts: number;
+  mediaScanPollSeconds: number;
+  mediaScanBatchSize: number;
+  mediaScanRetrySeconds: number;
+  alertPollSeconds: number;
+  alertCooldownSeconds: number;
+  alertBacklogSeconds: number;
+  alertScanBacklog: number;
+  mediaDeletionStaleSeconds: number;
 };
 
 function bool(value: string | undefined, fallback: boolean): boolean {
@@ -188,6 +205,27 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     adminStepUpTtlSeconds: int(env.ADMIN_STEP_UP_TTL_SECONDS, 600),
     exportTtlDays: int(env.DATA_EXPORT_TTL_DAYS, 7),
     deletionGraceDays: int(env.ACCOUNT_DELETION_GRACE_DAYS, 30),
+    mediaQuotaBytesDefault: int(env.MEDIA_QUOTA_BYTES_DEFAULT, 209_715_200),
+    mediaDeletionPollSeconds: int(env.MEDIA_DELETION_POLL_SECONDS, 60),
+    mediaDeletionBatchSize: int(env.MEDIA_DELETION_BATCH_SIZE, 20),
+    mediaUploadCleanupIntervalSeconds: int(env.MEDIA_UPLOAD_CLEANUP_INTERVAL_SECONDS, 300),
+    // 'none' keeps the no-op scanner: media stays 'unscanned' and the public
+    // read path refuses it. 'clamav' talks to a real clamd over TCP.
+    mediaScanner: (env.MEDIA_SCANNER ?? 'none').toLowerCase(),
+    clamavHost: env.CLAMAV_HOST ?? '',
+    clamavPort: int(env.CLAMAV_PORT, 3310),
+    clamavTimeoutMs: int(env.CLAMAV_TIMEOUT_MS, 30_000),
+    mediaScanMaxAttempts: int(env.MEDIA_SCAN_MAX_ATTEMPTS, 3),
+    mediaScanPollSeconds: int(env.MEDIA_SCAN_POLL_SECONDS, 120),
+    mediaScanBatchSize: int(env.MEDIA_SCAN_BATCH_SIZE, 5),
+    mediaScanRetrySeconds: int(env.MEDIA_SCAN_RETRY_SECONDS, 300),
+    // Alert thresholds live in config so an operator can tune them without a
+    // deploy; the values below are the documented defaults.
+    alertPollSeconds: int(env.MEDIA_ALERT_POLL_SECONDS, 120),
+    alertCooldownSeconds: int(env.MEDIA_ALERT_COOLDOWN_SECONDS, 1800),
+    alertBacklogSeconds: int(env.MEDIA_ALERT_BACKLOG_SECONDS, 600),
+    alertScanBacklog: int(env.MEDIA_ALERT_SCAN_BACKLOG, 50),
+    mediaDeletionStaleSeconds: int(env.MEDIA_DELETION_STALE_SECONDS, 900),
   };
 }
 

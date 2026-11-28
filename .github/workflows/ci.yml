@@ -23,12 +23,27 @@ jobs:
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
       - run: npm audit --omit=dev --audit-level=high
-      - run: npm run typecheck && npm test
+      # Lint/type gate. The project has no separate ESLint config; tsc in strict
+      # mode is the static gate, and junk-check catches corrupted writes.
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+      # Every suite starts from an empty PGlite database and applies the real
+      # migrations through runMigrations, so a broken migration fails this step.
+      # Serial on purpose: every file boots its own PGlite database and runs
+      # PBKDF2, and running them in parallel pushes the migration test past its
+      # timeout on a 2-core runner. The suite is deterministic this way.
+      - name: Unit and migration tests
+        run: node --test --test-concurrency=1 --test-timeout=120000 "dist/test/*.test.js"
         env:
           NODE_ENV: test
           AUTH_JWT_SECRET: ci-secret-with-at-least-32-characters
           AUTH_EXPOSE_DEV_TOKENS: "true"
           PLATE_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
+          MEDIA_S3_BUCKET: ci-placeholder
+          MEDIA_S3_ACCESS_KEY: ci-placeholder
+          MEDIA_S3_SECRET_KEY: ci-placeholder
       - run: node tools/junk-check.mjs
 
   admin:
@@ -54,13 +69,23 @@ jobs:
         working-directory: android
     steps:
       - uses: actions/checkout@v4
+      # AGP 8.11 supports JDK 17-23; 21 is the version this build is tested on.
+      # Java 25 is rejected outright, so pinning here is deliberate.
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
       - run: chmod +x gradlew
-      - run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
+      - name: Lint, unit tests, and debug build
+        run: ./gradlew --no-daemon lintDebug testDebugUnitTest assembleDebug assembleDebugAndroidTest
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-lint
+          path: android/app/build/reports/lint-results-debug.*
+          if-no-files-found: ignore
 
   media-integration:
     runs-on: ubuntu-latest
@@ -103,3 +128,329 @@ jobs:
           MEDIA_S3_ACCESS_KEY: ciaccess
           MEDIA_S3_SECRET_KEY: cisecret123
           MEDIA_S3_FORCE_PATH_STYLE: "true"
+          AUTH_JWT_SECRET: ci-secret-with-at-least-32-characters
+          AUTH_EXPOSE_DEV_TOKENS: "true"
+          PLATE_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
+
+  clamav-integration:
+    # Real clamd, not a mock TCP server. The image is pinned to a release tag so
+    # the signature set and protocol behaviour do not drift under us.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      clamav:
+        image: clamav/clamav:1.4.7-debian
+        ports:
+          - 3310:3310
+        options: >-
+          --health-cmd "/usr/local/bin/clamdcheck.sh"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 20
+          --health-start-period 180s
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      # The suite skips itself unless this flag is set, so a broken daemon shows
+      # up as a failure rather than a silently green run.
+      - name: ClamAV integration (clean, EICAR, failures, worker state)
+        run: node --test "dist/test/clamav.integration.test.js"
+        env:
+          CLAMAV_INTEGRATION: "1"
+          CLAMAV_HOST: 127.0.0.1
+          CLAMAV_PORT: "3310"
+          CLAMAV_TIMEOUT_MS: "60000"
+          NODE_ENV: test
+          AUTH_JWT_SECRET: ci-secret-with-at-least-32-characters
+          AUTH_EXPOSE_DEV_TOKENS: "true"
+          PLATE_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
+          MEDIA_S3_BUCKET: ci-placeholder
+          MEDIA_S3_ACCESS_KEY: ci-placeholder
+          MEDIA_S3_SECRET_KEY: ci-placeholder
+
+  postgres-integration:
+    # Real PostgreSQL + PostGIS, not PGlite. Migrations 0001-0013 and spatial
+    # behaviour must be proven against the actual engine.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: riderjourney
+          POSTGRES_PASSWORD: riderjourney
+          POSTGRES_DB: riderjourney_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U riderjourney -d riderjourney_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+          --health-start-period 30s
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: PostgreSQL/PostGIS integration (migrations, constraints, spatial, transactions)
+        run: node --test "dist/test/postgres.integration.test.js"
+        env:
+          POSTGRES_INTEGRATION: "1"
+          DATABASE_URL: postgres://riderjourney:riderjourney@127.0.0.1:5432/riderjourney_test
+          NODE_ENV: test
+          AUTH_JWT_SECRET: ci-secret-with-at-least-32-characters
+          AUTH_EXPOSE_DEV_TOKENS: "true"
+          PLATE_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
+
+  emulator-capability:
+    # Diagnosis only. Answers one question: can this runner boot an Android
+    # emulator with hardware acceleration? Evidence is uploaded and the job
+    # fails when the device never reaches sys.boot_completed=1, so a green run
+    # is the prerequisite for enabling the API 34/36 jobs.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Runner and KVM facts (before any fix)
+        run: |
+          uname -a
+          echo "cpus: $(nproc)"
+          systemd-detect-virt || true
+          (sudo -n true && echo 'passwordless-sudo: yes') || echo 'passwordless-sudo: no'
+          id
+          getent group kvm || echo 'kvm-group: absent'
+          ls -l /dev/kvm || echo 'kvm-node: absent'
+          (test -r /dev/kvm && echo 'kvm-readable: yes') || echo 'kvm-readable: no'
+          (test -w /dev/kvm && echo 'kvm-writable: yes') || echo 'kvm-writable: no'
+          grep -i kvm /proc/misc || echo 'proc-misc-kvm: absent'
+          echo "cpu-flags-vmx-svm: $(grep -c -E 'vmx|svm' /proc/cpuinfo || true)"
+          cat /sys/module/kvm_intel/parameters/nested 2>/dev/null || echo 'kvm_intel: absent'
+          cat /sys/module/kvm_amd/parameters/nested 2>/dev/null || echo 'kvm_amd: absent'
+          java -version 2>&1 | head -3
+      - name: Grant the runner user read/write on /dev/kvm
+        # The action's `auto` mode appends `-accel off` when accessSync(/dev/kvm,
+        # R_OK|W_OK) throws, and emulator 35 rejects `-accel off` outright. A node
+        # that exists but is 0660 root:kvm is therefore worse than no node.
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          ls -l /dev/kvm
+          (test -r /dev/kvm && echo 'kvm-readable-after-fix: yes') || echo 'kvm-readable-after-fix: no'
+          (test -w /dev/kvm && echo 'kvm-writable-after-fix: yes') || echo 'kvm-writable-after-fix: no'
+      - name: Boot attempt with hardware acceleration (API 34)
+        # The action installs the SDK, creates the AVD, launches the emulator and
+        # waits for sys.boot_completed. `disable-linux-hw-accel: false` is the
+        # whole point: it stops the action from appending `-accel off` when the
+        # /dev/kvm access check fails, so a non-bootable runner fails loudly
+        # instead of silently degrading to software emulation.
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-linux-hw-accel: false
+          emulator-boot-timeout: 600
+          script: |
+            set -u
+            echo "== devices =="            | tee "$RUNNER_TEMP/boot-proof.txt"
+            adb devices -l                 | tee -a "$RUNNER_TEMP/boot-proof.txt"
+            echo "== props =="              | tee -a "$RUNNER_TEMP/boot-proof.txt"
+            adb shell getprop sys.boot_completed | tee -a "$RUNNER_TEMP/boot-proof.txt"
+            adb shell getprop ro.build.version.sdk | tee -a "$RUNNER_TEMP/boot-proof.txt"
+            adb shell getprop ro.product.cpu.abi | tee -a "$RUNNER_TEMP/boot-proof.txt"
+            adb shell getprop ro.kernel.qemu | tee -a "$RUNNER_TEMP/boot-proof.txt"
+            test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
+      - name: Copy AVD config
+        if: always()
+        run: cp "$HOME/.android/avd/test.avd/config.ini" "$RUNNER_TEMP/avd-config.ini" || true
+      - name: Upload emulator evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulator-capability-evidence
+          path: |
+            ${{ runner.temp }}/boot-proof.txt
+            ${{ runner.temp }}/avd-config.ini
+          if-no-files-found: warn
+
+  android-emulator:
+    # Real connected tests on a booted emulator, one job per API level.
+    #
+    # The udev rule is load-bearing, not cosmetic: the emulator action resolves
+    # disable-linux-hw-accel=auto with accessSync('/dev/kvm', R_OK|W_OK), and
+    # appends `-accel off` when that throws. `-accel off` is exactly what makes
+    # emulator 35 abort with "Software CPU emulation (-accel off) is not
+    # supported", which is what turned run #13 green with zero tests executed.
+    # The KVM assertion below therefore checks readability and writability, not
+    # the existence of the node.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        api-level: [34, 36]
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: riderjourney
+          POSTGRES_PASSWORD: riderjourney
+          POSTGRES_DB: riderjourney
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U riderjourney"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: KVM must be readable and writable, not merely present
+        working-directory: .
+        run: |
+          sudo tee /etc/udev/rules.d/99-kvm4all.rules > /dev/null <<'RULE'
+          KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"
+          RULE
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          ls -l /dev/kvm
+          if ! test -r /dev/kvm || ! test -w /dev/kvm; then
+            echo '::error::/dev/kvm is not usable by the runner user; the emulator would be forced into -accel off'
+            exit 1
+          fi
+      - name: Start S3-compatible storage, database schema, and API
+        working-directory: .
+        env:
+          DATABASE_URL: postgres://riderjourney:riderjourney@127.0.0.1:5432/riderjourney
+          AUTH_JWT_SECRET: ci-secret-with-at-least-32-characters
+          PLATE_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
+          MEDIA_S3_ENDPOINT: http://127.0.0.1:8333
+          MEDIA_S3_BUCKET: rj-media-e2e
+          MEDIA_S3_REGION: us-east-1
+          MEDIA_S3_ACCESS_KEY: ciaccess
+          MEDIA_S3_SECRET_KEY: cisecret123
+          MEDIA_S3_FORCE_PATH_STYLE: "true"
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/seaweedfs.tar.gz https://github.com/seaweedfs/seaweedfs/releases/download/4.55/linux_amd64.tar.gz
+          mkdir -p /tmp/seaweedfs /tmp/seaweed-data
+          tar -xzf /tmp/seaweedfs.tar.gz -C /tmp/seaweedfs
+          cat > /tmp/seaweed-s3.json <<'JSON'
+          {"identities":[{"name":"ci","credentials":[{"accessKey":"ciaccess","secretKey":"cisecret123"}],"actions":["Admin","Read","Write","List","Tagging"]}]}
+          JSON
+          nohup /tmp/seaweedfs/weed server -dir=/tmp/seaweed-data -s3 -s3.port=8333 \
+            -s3.config=/tmp/seaweed-s3.json -volume.max=50 > /tmp/seaweed.log 2>&1 &
+          for i in $(seq 1 40); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8333/ || true)
+            if [ "$code" = "403" ]; then break; fi
+            sleep 2
+          done
+          cd backend
+          npm ci
+          npm run build
+          # The bucket is created with the same SDK the app's storage path uses,
+          # so a missing bucket fails here rather than 40 device tests later.
+          node --input-type=module <<'NODE'
+          import { S3Client, CreateBucketCommand } from '@aws-sdk/client-s3';
+          const s3 = new S3Client({
+            endpoint: process.env.MEDIA_S3_ENDPOINT,
+            region: process.env.MEDIA_S3_REGION,
+            forcePathStyle: true,
+            credentials: {
+              accessKeyId: process.env.MEDIA_S3_ACCESS_KEY,
+              secretAccessKey: process.env.MEDIA_S3_SECRET_KEY,
+            },
+          });
+          await s3.send(new CreateBucketCommand({ Bucket: process.env.MEDIA_S3_BUCKET }));
+          console.log('bucket ready:', process.env.MEDIA_S3_BUCKET);
+          NODE
+          DATABASE_URL="$DATABASE_URL" npm run migration:run
+          cd ..
+          # NODE_ENV=test disables the HTTP throttler so 26 tests creating their
+          # own accounts are not answered with 429.
+          NODE_ENV=test HOST=0.0.0.0 PORT=3000 nohup node backend/dist/main.js > /tmp/backend.log 2>&1 &
+          # /health/ready is the endpoint that actually touches PostgreSQL and
+          # PostGIS, so a 200 here means the schema the tests need is usable.
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3000/health/ready > /dev/null 2>&1; then
+              echo 'api ready'
+              curl -fsS http://127.0.0.1:3000/health/ready
+              exit 0
+            fi
+            sleep 1
+          done
+          echo '::error::API never answered /health/ready'
+          tail -60 /tmp/backend.log
+          exit 1
+      - name: Create artifact directory
+        working-directory: .
+        run: mkdir -p artifacts
+      - run: chmod +x gradlew
+      - name: Instrumented tests (API ${{ matrix.api-level }})
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: google_apis
+          arch: x86_64
+          disable-linux-hw-accel: false
+          emulator-boot-timeout: 600
+          working-directory: android
+          # Each line is executed as its own `sh -c`, so a multi-line block or
+          # brace group is a syntax error here.
+          script: |
+            adb shell getprop sys.boot_completed | tr -d '\r' | tee ../artifacts/boot-api${{ matrix.api-level }}.txt
+            adb shell getprop ro.build.version.sdk | tr -d '\r' | tee -a ../artifacts/boot-api${{ matrix.api-level }}.txt
+            adb shell getprop ro.product.cpu.abi | tr -d '\r' | tee -a ../artifacts/boot-api${{ matrix.api-level }}.txt
+            test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
+            # Storage URLs are signed for 127.0.0.1, so the emulator reaches the
+            # host's bucket through adb reverse instead of a LAN address that the
+            # app's network security config forbids in cleartext.
+            adb reverse tcp:8333 tcp:8333
+            adb reverse --list
+            ./gradlew connectedDebugAndroidTest
+      - name: Gate on the mandatory test manifest
+        if: always()
+        working-directory: .
+        run: |
+          boot=$(head -1 "artifacts/boot-api${{ matrix.api-level }}.txt" 2>/dev/null || true)
+          node android/tools/check-connected-results.mjs \
+            --api "${{ matrix.api-level }}" \
+            --boot "${boot:-unknown}" \
+            --summary "artifacts/connected-summary-api${{ matrix.api-level }}.json"
+      - name: Upload connected results and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-connected-api${{ matrix.api-level }}
+          path: |
+            android/app/build/outputs/androidTest-results/connected
+            android/app/build/reports/androidTests/connected
+            artifacts
+            /tmp/backend.log
+            /tmp/seaweed.log
+          if-no-files-found: warn

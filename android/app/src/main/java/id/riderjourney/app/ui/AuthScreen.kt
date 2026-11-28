@@ -22,6 +22,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -91,7 +92,7 @@ fun AuthScreen(viewModel: SessionViewModel) {
                             label = { Text("Email") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().testTag("auth_email"),
                         )
                     }
                     if (mode == AuthMode.RESET_CONFIRM) {
@@ -111,7 +112,7 @@ fun AuthScreen(viewModel: SessionViewModel) {
                             singleLine = true,
                             visualTransformation = PasswordVisualTransformation(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().testTag("auth_password"),
                         )
                     }
 
@@ -127,7 +128,7 @@ fun AuthScreen(viewModel: SessionViewModel) {
                                     AuthMode.RESET_CONFIRM -> viewModel.confirmReset(resetToken, password)
                                 }
                             },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().testTag("auth_submit"),
                             enabled = email.isNotBlank() && (mode == AuthMode.RESET_REQUEST || mode == AuthMode.RESET_CONFIRM || password.isNotBlank()),
                         ) {
                             Text(

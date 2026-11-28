@@ -422,3 +422,191 @@ Kontrak lain, termasuk bentuk sukses, tidak berubah. `docs/openapi.json` hanya m
 | `POST /v1/media/uploads/{id}/complete` (galat) | Kode baru: `MEDIA_OBJECT_MISSING`, `MEDIA_SIZE_MISMATCH`, `MEDIA_CONTENT_MISMATCH`, `MEDIA_CHECKSUM_MISMATCH`, `MEDIA_CHECKSUM_MISSING`, `MEDIA_NOT_PENDING`, `MEDIA_UPLOAD_EXPIRED` |
 
 Klien harus mengirim checksum dari byte yang benar-benar akan diunggah dan tidak boleh mengandalkan `200` sebelum objek selesai di-`PUT`.
+
+## 21. Perubahan kontrak Phase 6.2 (storage lifecycle)
+
+Tidak ada endpoint baru untuk menyesuaikan frontend; Phase 6.2 memakai kontrak
+Phase 6.1 dan menambah dua endpoint baca yang sudah ada di controller.
+
+### `POST /v1/media/uploads`
+
+Response `201` (intent baru atau re-arm intent `expired`):
+
+```json
+{
+  "id": "uuid",
+  "status": "pending",
+  "uploadUrl": "https://…presigned PUT…",
+  "method": "PUT",
+  "requiredHeaders": { "Content-Type": "image/jpeg", "If-None-Match": "*" },
+  "expiresIn": 300,
+  "note": "…"
+}
+```
+
+Klien **wajib** mengirim persis `Content-Type` dan `If-None-Match: *` seperti
+yang ditandatangani. Header tambahan (mis. `Authorization` dari interceptor
+aplikasi) membatalkan tanda tangan SigV4.
+
+Jika `clientMediaId` sudah ada dan berstatus `pending`, response memakai key yang
+sama dengan jendela waktu yang diperpanjang. Jika berstatus `expired`, backend
+membuat **object key baru** dan mengembalikan `uploadUrl` baru. Status lain
+mengembalikan objek ringkas dengan `uploadUrl: null` dan `duplicate: true`.
+
+Error: `409 STORAGE_QUOTA_EXCEEDED`, `422 MEDIA_TOO_LARGE`,
+`422 MEDIA_TYPE_UNSUPPORTED`, `429 MEDIA_RATE_LIMITED`,
+`503 MEDIA_UNAVAILABLE` (storage belum dikonfigurasi).
+
+### `POST /v1/media/uploads/{id}/complete`
+
+Tanpa body. Ukuran, tipe, dan checksum diambil dari objek yang dibaca ulang
+server.
+
+- `200 { "id", "status": "ready", "purpose" }`
+- `200 { …, "duplicate": true }` bila sudah `ready`
+- `409 MEDIA_OBJECT_MISSING` — belum ada objek
+- `409 MEDIA_SIZE_MISMATCH` / `409 MEDIA_CONTENT_MISMATCH` /
+  `409 MEDIA_CHECKSUM_MISMATCH` — objek tidak cocok; baris menjadi `rejected`
+- `409 MEDIA_NOT_PENDING` — status berubah di tengah verifikasi
+- `410 MEDIA_UPLOAD_EXPIRED` — jendela unggah lewat
+- `404 MEDIA_NOT_FOUND` — bukan milik pemanggil
+
+### `GET /v1/media/{id}/url`
+
+Terautentikasi. `404 MEDIA_NOT_FOUND` bila pemanggil tidak berhak melihat media.
+
+```json
+{
+  "id": "uuid",
+  "mimeType": "image/jpeg",
+  "sizeBytes": 2048,
+  "expiresAt": "2026-11-27T07:20:00.000Z",
+  "expiresIn": 300,
+  "url": "/v1/media/{id}/access?expires=…&signature=…"
+}
+```
+
+### `GET /v1/media/{id}/access?expires=&signature=`
+
+Tidak memerlukan bearer token. `200` mengembalikan
+`{ id, mimeType, sizeBytes, purpose, expiresAt, downloadUrl, downloadExpiresIn: 60 }`
+dengan `Cache-Control: private, max-age=60` dan `Referrer-Policy: no-referrer`.
+`401 SIGNED_URL_EXPIRED` atau `401 SIGNED_URL_INVALID`; `404 MEDIA_NOT_FOUND`
+bila media tidak lagi `ready`.
+
+### `GET /v1/media/quota`
+
+Terautentikasi.
+
+```json
+{ "quotaBytes": 209715200, "usedBytes": 0, "reservedBytes": 0, "availableBytes": 209715200 }
+```
+
+`usedBytes` diturunkan dari `media_assets` berstatus `ready`.
+
+## 22. Perubahan kontrak Phase 6.3 (penghapusan & scanning)
+
+### `DELETE /v1/media/{id}`
+
+Terautentikasi. Hanya pemilik media.
+
+- `200 { "id", "status": "deleting", "duplicate": false }` — objek dijadwalkan
+  dihapus; kuota belum berkurang.
+- `200 { "id", "status": "deleted" | "deleting", "duplicate": true }` — permintaan
+  berulang, idempoten.
+- `409 MEDIA_IN_USE` — masih direferensikan. Body memuat
+  `references: string[]` (`post`, `trip`, `poster`, `hazard`, `avatar`,
+  `vehicle`, `album`, `album_cover`).
+- `409 MEDIA_NOT_DELETABLE` — status belum `ready` (mis. masih `pending`).
+- `404 MEDIA_NOT_FOUND` — bukan milik pemanggil atau tidak ada.
+
+`POST /v1/media/uploads/{id}/complete` sekarang juga mengembalikan
+`scanStatus` (`unscanned` | `clean` | `quarantined` | `scan_failed`).
+
+### `GET /v1/media/quota`
+
+```json
+{
+  "quotaBytes": 209715200,
+  "usedBytes": 1048576,
+  "readyBytes": 524288,
+  "deletionPendingBytes": 524288,
+  "reservedBytes": 0,
+  "availableBytes": 208666624
+}
+```
+
+`usedBytes` mencakup media yang sedang menunggu penghapusan, karena byte-nya
+masih tersimpan.
+
+### `GET /v1/admin/media/workers`
+
+Admin only (`AuthGuard` + `AdminGuard`). Read-only. Lihat
+`docs/ARCHITECTURE.md` §18.4 untuk daftar field. Tidak memuat object key,
+signed URL, atau kredensial.
+
+### Kebijakan akses media
+
+`GET /v1/media/{id}/url` dan `GET /v1/media/{id}/access` hanya melayani media
+`ready`. Untuk pemanggil selain pemilik, `scan_status` harus `clean`; media
+`unscanned`, `scan_failed`, atau `quarantined` menjawab `404 MEDIA_NOT_FOUND`.
+
+## 23. Perubahan kontrak Phase 6.4 (reliability, moderasi, alerting)
+
+**Pembatalan penghapusan (pemilik).**
+
+`POST /v1/media/:id/cancel-deletion` → `200`
+
+```json
+{ "id": "…", "status": "ready", "cancelled": true }
+```
+
+`409 MEDIA_DELETION_ALREADY_CLAIMED` — worker sudah mengklaim, objek mungkin
+sudah hilang. `409 MEDIA_DELETION_COMPLETED` — sudah `deleted`. `409
+MEDIA_DELETION_IN_PROGRESS` — job tidak lagi `pending`. `404` — bukan milik
+akun. Idempoten: memanggil saat status sudah `ready` mengembalikan
+`duplicate: true`.
+
+**Moderasi media (admin).**
+
+| Method | Path | Permission |
+| --- | --- | --- |
+| GET | `/v1/admin/media/moderation?status=&purpose=&limit=&before=` | `media.read` |
+| GET | `/v1/admin/media/moderation/:id/history` | `media.read` |
+| GET | `/v1/admin/media/moderation/:id/preview` | `media.read` |
+| POST | `/v1/admin/media/moderation/:id/decision` | `media.moderate` + step-up |
+| POST | `/v1/admin/media/moderation/:id/reopen` | `media.moderate` + step-up |
+
+Queue item: `{ id, ownerId, purpose, mimeType, sizeBytes, status, scanStatus,
+moderationStatus, moderationReason, requestedAt, reviewedAt, reviewerId,
+createdAt }` plus `summary { pendingReview, approved, rejected, hidden,
+notRequired }`. Respons tidak memuat object key.
+
+Decision body: `{ "action": "approve" | "reject" | "hide", "reason": "…" }`.
+`reason` wajib untuk `reject`/`hide` (`400 MODERATION_REASON_REQUIRED`).
+
+Preview: `{ id, url, mimeType, sizeBytes, scanStatus, moderationStatus,
+expiresInSeconds: 120 }`; `409 MEDIA_PREVIEW_BLOCKED` bila `scan_status !==
+'clean'` — pratinjau tidak pernah menyajikan file yang belum lolos pemindaian.
+
+**Operasi penghapusan (admin, `media.ops` + step-up untuk mutasi).**
+
+| Method | Path |
+| --- | --- |
+| GET | `/v1/admin/media/deletions/failed` |
+| POST | `/v1/admin/media/deletions/:id/retry` (`{ "note": "…" }`, opsional) |
+| POST | `/v1/admin/media/deletions/reconcile` |
+
+**Alerting (admin).**
+
+`GET /v1/admin/media/alerts?status=active|resolved|all` (`media.read`) →
+`{ items: [{ id, kind, severity, status, summary, details, occurrences,
+firstSeenAt, lastSeenAt, lastNotifiedAt, resolvedAt }], notifier: { name,
+available } }`.
+
+`POST /v1/admin/media/alerts/evaluate` (`media.ops`) menjalankan evaluasi manual.
+
+**Visibilitas media.** Selain aturan audiens yang sudah ada, pembacaan oleh
+non-pemilik kini mensyaratkan `scan_status='clean'` dan
+`moderation_status IN ('approved','not_required')`. Efek kontrak: media komunitas
+yang baru diunggah menjawab `404` bagi pengguna lain sampai disetujui reviewer.

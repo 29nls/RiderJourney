@@ -355,3 +355,205 @@ Alur unggah:
 Penghapusan memakai transactional outbox `media_deletion_outbox`. Transaksi yang menghapus metadata (akun, purge sosial, hapus album) juga memasukkan setiap `object_key`. Worker mengambil baris dengan `FOR UPDATE SKIP LOCKED`, menghapus objek, lalu memverifikasi dengan `HEAD` bahwa objek benar-benar tidak ada. Kegagalan dicatat dengan `attempts`, `last_error`, dan backoff eksponensial; setelah batas percobaan baris menjadi `failed` (dead-letter).
 
 Adapter storage ada di `backend/src/media/object-storage.ts`; verifikasi di `media.service.ts`; outbox dan worker di `media/deletion-outbox.ts`.
+
+## 17. Storage lifecycle dan integrasi Android (Phase 6.2)
+
+Phase 6.1 menyediakan `S3ObjectStorage`, SigV4, upload intent, verifikasi HEAD +
+SHA-256, dan transactional outbox. Phase 6.2 menutup siklus hidupnya; pipeline
+tersebut tidak dibangun ulang.
+
+### 17.1 Siklus hidup upload
+
+```
+POST /v1/media/uploads        → media_assets(status=pending, upload_expires_at)
+  reserve quota (rentang CAS)
+PUT presigned                 → objek di bucket privat
+POST /uploads/:id/complete    → HEAD + SHA-256 + magic bytes → status=ready
+```
+
+Kegagalan pada tahap mana pun berakhir di salah satu status terminal:
+`rejected` (verifikasi gagal), `expired` (jendela unggah lewat), atau `deleted`.
+
+### 17.2 Pembersihan upload kedaluwarsa
+
+`UploadCleanupService.cleanupExpired()` berjalan periodik (default 300 detik,
+`MEDIA_UPLOAD_CLEANUP_INTERVAL_SECONDS`) dan hanya menyentuh baris `pending`.
+
+Urutannya penting:
+
+1. `HEAD` objek **sebelum** transaksi apa pun — tidak ada transaksi database yang
+   tertahan selama menyentuh storage.
+2. Transisi status memakai CAS
+   `id + status='pending' + object_key + upload_expires_at <= now()`.
+   `object_key` ikut dijaga karena retry klien dapat me-*re-arm* baris yang sama
+   dengan key baru; hasil HEAD yang basi tidak boleh meng-expire intent baru.
+3. Enqueue outbox berada di transaksi yang sama dengan transisi status.
+4. Reservasi kuota dilepas setelah commit (idempoten; `reconcile` memperbaiki
+   bila proses mati di antaranya).
+
+Baris `ready` tidak pernah dipilih, sehingga media siap tidak dapat terhapus
+oleh pembersihan.
+
+### 17.3 Worker penghapusan terjadwal
+
+`MediaDeletionWorker.startScheduled()` dijalankan dari `main.ts` hanya ketika
+konfigurasi storage lengkap. Klaim job memakai
+`FOR UPDATE SKIP LOCKED`, sehingga beberapa instance backend dapat berjalan
+bersamaan tanpa menghapus objek yang sama dua kali. Job yang ditinggal proses
+mati diklaim ulang setelah lease 10 menit. Kegagalan di-retry dengan backoff
+eksponensial (`base * 2^(n-1)`, maksimum 3600 detik) dan setelah
+`MEDIA_DELETION_MAX_ATTEMPTS` berpindah ke status `failed` (dead-letter).
+`status()` melaporkan jumlah `pending/processing/done/failed`, `lastRunAt`, dan
+`lastResult` untuk monitoring. `stopScheduled()` menunggu batch berjalan selesai.
+
+### 17.4 Kuota penyimpanan
+
+`storage_quotas` menyimpan `quota_bytes` dan `reserved_bytes`. `used_bytes`
+**selalu diturunkan** dari `media_assets` berstatus `ready`, sehingga penghapusan
+media otomatis membebaskan ruang tanpa pembukuan kedua yang bisa menyimpang.
+Reservasi memakai satu UPDATE bersyarat: hanya permintaan yang totalnya masih
+muat yang berhasil, sisanya menerima `409 STORAGE_QUOTA_EXCEEDED`. Tidak ada
+angka ukuran dari klien yang dipercaya — `complete` memakai panjang objek hasil
+HEAD.
+
+### 17.5 Akses unduh
+
+`GET /v1/media/:id/url` (terautentikasi) memvalidasi visibilitas lewat
+`MediaService.accessible()` lalu menerbitkan capability URL
+`/v1/media/:id/access?expires=&signature=`. Tanda tangan HMAC-SHA256 terikat
+pada `id` dan `expires`, dibandingkan dengan `timingSafeEqual`. Endpoint akses
+tidak memerlukan bearer token — tanda tangan adalah grant-nya — dan hanya
+mengembalikan presigned GET berumur 60 detik. Bucket tetap privat.
+
+### 17.6 Scanning media
+
+`MediaScanner` adalah antarmuka; `NoOpMediaScanner` melaporkan
+`available() = false` dan media tetap `unscanned`. Tidak ada provider
+antivirus/CSAM/moderation yang terhubung, dan media tidak pernah ditandai
+`clean` tanpa pemindaian nyata.
+
+## 18. Penghapusan media dan akuntansi kuota (Phase 6.3)
+
+### 18.1 Siklus hidup lengkap
+
+```
+pending ──complete──→ ready ──delete──→ deleting ──worker verifies──→ deleted
+   │                    │                  │
+   └──expire──→ expired  └──reject──→ rejected
+```
+
+`deleting` adalah status antara yang penting: metadata sudah ditandai, tetapi byte
+masih ada di object storage. Kuota menghitungnya sebagai pemakaian sampai worker
+membuktikan objek hilang dan memindahkan baris ke `deleted`.
+
+### 18.2 Reference management
+
+Sebelum media boleh dihapus, `MediaService.referencesOf()` memeriksa setiap tabel
+yang menunjuk ke `media_assets`:
+
+| Tabel | Kolom | Perilaku |
+| --- | --- | --- |
+| `post_media` | `media_id` | media lampiran post |
+| `trip_photos` | `media_id` | foto trip |
+| `posters` | `media_id` | poster journey |
+| `hazard_reports` | `photo_media_id` | foto laporan bahaya |
+| `rider_profiles` | `avatar_media_id` | avatar (dibaca feed) |
+| `users` | `avatar_media_id` | cermin untuk `/v1/me` |
+| `vehicles` | `photo_media_id` | foto kendaraan |
+| `albums` | `cover_media_id` | sampul album |
+| `media_assets` | `album_id` | keanggotaan album |
+
+`DELETE /v1/media/:id` menolak dengan `409 MEDIA_IN_USE` bila ada referensi.
+Tidak ada penghapusan paksa: pemanggil harus melepas referensinya lebih dulu.
+
+Penggantian avatar dan foto kendaraan berjalan dalam satu transaksi: pointer
+diperbarui, lalu `detachAndRelease()` menghitung ulang referensi **setelah**
+detach. Media lama hanya masuk `deleting` bila benar-benar tidak ada lagi yang
+menunjuk ke sana, sehingga mengganti avatar tidak pernah menghapus foto yang
+dipakai di tempat lain.
+
+### 18.3 Akuntansi kuota
+
+| Status | Dihitung sebagai |
+| --- | --- |
+| `pending` | `reservedBytes` (ukuran intent, belum diverifikasi) |
+| `ready` | `usedBytes` |
+| `deleting` | `usedBytes` (masih di storage) |
+| `expired` / `rejected` | tidak dihitung; reservasi dilepas |
+| `deleted` | tidak dihitung |
+
+`usedBytes = readyBytes + deletionPendingBytes`, dan `availableBytes =
+quotaBytes - usedBytes - reservedBytes`. Ketiga query (baca kuota, reservasi,
+rekonsiliasi) memakai daftar status yang sama supaya tidak ada endpoint yang
+menghitung berbeda.
+
+### 18.4 Observability worker
+
+`GET /v1/admin/media/workers` (AuthGuard + AdminGuard) mengembalikan:
+
+- `deletion`: `status` (`healthy` / `degraded` / `unavailable`), `pending`,
+  `processing`, `done`, `failed`, `oldestPendingSeconds`, `lastSuccessAt`,
+  `lastFailureAt`, `lastError`, `scheduled`, `running`, `lastRunAt`, `lastResult`.
+- `uploadCleanup`: status, jadwal, hasil terakhir, error terakhir.
+- `scanning`: provider, ketersediaan, jumlah `unscanned`/`clean`/`quarantined`/`failed`.
+
+Tidak ada object key, signed URL, kredensial, atau metadata pengguna di response.
+
+`degraded` muncul saat ada dead-letter atau job tertua lebih dari 10 menit;
+`unavailable` berarti scheduler tidak berjalan sehingga backlog tidak akan
+pernah dibersihkan sendiri.
+
+### 18.5 Scanning dan karantina
+
+`MediaScanner` memisahkan dua hal yang sering dicampur:
+
+- **malware scanning** — `ClamAvMediaScanner` berbicara protokol `INSTREAM` ke
+  clamd (`MEDIA_SCANNER=clamav`, `CLAMAV_HOST`, `CLAMAV_PORT`).
+- **content moderation** — belum ada provider; `moderation_status` tetap
+  terpisah dan tidak diisi oleh scanner malware.
+
+`MediaScanWorker` mengklaim baris `ready` + `unscanned` dengan `SKIP LOCKED`,
+memberi lease 5 menit, dan menulis hasil: `clean`, `quarantined`, atau
+`scan_failed`. Kegagalan sementara mengembalikan baris ke `unscanned` dengan
+backoff; setelah `MEDIA_SCAN_MAX_ATTEMPTS` menjadi `scan_failed`. Tidak ada jalur
+yang mengubah media menjadi `clean` tanpa hasil scan nyata.
+
+Kebijakan baca bersifat fail-closed: pengguna selain pemilik hanya dapat
+mengambil media bila `scan_status = 'clean'`. Media `unscanned`,
+`scan_failed`, dan `quarantined` tidak dapat diakses publik; pemilik tetap dapat
+melihat miliknya sendiri untuk mengetahui statusnya.
+
+## 19. Reliability dan verifikasi (Phase 6.4)
+
+Phase 6.4 tidak menambah fitur produk; ia menutup celah operasional yang
+ditemukan di 6.3.
+
+**Pemulihan penghapusan.** `MediaDeletionWorker.reconcileStale()` mencari baris
+`media_assets.status='deleting'` yang lebih tua dari
+`MEDIA_DELETION_STALE_SECONDS` dan tidak punya job `pending`/`processing`. Hasil
+`HEAD` menentukan nasibnya: objek masih ada → job di-requeue (atau dead letter
+yang sama di-reset); objek sudah hilang → baris menjadi `deleted`. Baris tidak
+pernah kembali ke `ready`, karena itu akan menghidupkan kembali konten yang
+sudah diminta dihapus. Setiap tindakan dicatat di `media_deletion_ops_log`.
+
+**Pembatalan.** `POST /v1/media/:id/cancel-deletion` mengunci baris media dan
+baris outbox `FOR UPDATE`. Pembatalan hanya sah bila job `pending`, `attempts=0`,
+dan objek belum disentuh. Setelah worker mengklaim, jawabannya `409
+MEDIA_DELETION_ALREADY_CLAIMED`; setelah objek hilang, `409
+MEDIA_DELETION_COMPLETED`. Job yang dibatalkan dihapus dan jejaknya disimpan di
+ops log (bukan dihapus diam-diam).
+
+**Moderasi terpisah dari scanning.** `media_assets.moderation_status`
+(`not_required`, `pending_review`, `approved`, `rejected`, `hidden`) tidak pernah
+ditulis oleh scanner, dan `scan_status` tidak pernah ditulis oleh reviewer.
+Konten komunitas masuk antrean saat upload selesai; media pribadi (avatar, foto
+kendaraan) ditandai `not_required`. Visibilitas publik mensyaratkan
+`scan_status='clean'` **dan** `moderation_status IN ('approved','not_required')`.
+`media_moderation_log` menyimpan siapa, kapan, alasan, dan status sebelum/sesudah.
+
+**Alerting.** `AlertService` mengevaluasi kondisi worker dan menulis satu baris
+per jenis ke `ops_alert_events` (`UNIQUE(kind)`), sehingga kondisi berulang
+menaikkan `occurrences` alih-alih membuat baris baru. Notifikasi dibatasi
+cooldown dan dicatat di `last_notified_at`; kondisi yang hilang menjadi
+`resolved`. Pengiriman berada di balik `AlertNotifier`; implementasi saat ini
+no-op yang jujur melaporkan `available() === false`.

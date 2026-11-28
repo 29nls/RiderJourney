@@ -15,8 +15,13 @@ object LocalModule {
     @Provides
     @Singleton
     fun database(@ApplicationContext context: Context): TripDatabase =
-        Room.databaseBuilder(context, TripDatabase::class.java, "riderjourney-trips.db").build()
+        Room.databaseBuilder(context, TripDatabase::class.java, "riderjourney-trips.db")
+            .addMigrations(MIGRATION_1_2)
+            .build()
 
     @Provides
     fun dao(database: TripDatabase): TripDao = database.tripDao()
+
+    @Provides
+    fun mediaUploadDao(database: TripDatabase): MediaUploadDao = database.mediaUploadDao()
 }

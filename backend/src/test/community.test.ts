@@ -198,7 +198,7 @@ test('community audience and community album work through the API-created member
     .send({ mediaId: media.id, caption: 'Titik kumpul' });
   assert.equal(attached.status, 200, JSON.stringify(attached.body));
   assert.equal(attached.body.media.length, 1);
-  assert.equal(attached.body.media[0].moderationStatus, 'pending');
+  assert.equal(attached.body.media[0].moderationStatus, 'pending_review');
 
   const memberAlbums = await api.get(`/v1/communities/${communityId}/albums`).set(auth(pending.token));
   assert.equal(memberAlbums.status, 200, JSON.stringify(memberAlbums.body));

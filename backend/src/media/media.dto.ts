@@ -2,7 +2,7 @@ import { IsIn, IsInt, IsString, Length, Matches, Max, Min } from 'class-validato
 
 export const MEDIA_PURPOSES = [
   'hazard_photo', 'community_logo', 'community_cover', 'avatar',
-  'post_photo', 'post_video', 'album_photo', 'album_video', 'poster',
+  'post_photo', 'post_video', 'album_photo', 'album_video', 'poster', 'vehicle_photo',
 ] as const;
 
 export const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;

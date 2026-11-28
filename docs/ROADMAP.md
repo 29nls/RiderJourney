@@ -162,3 +162,75 @@ Slice hanya ditutup bila:
 ## 10. Yang tidak dijadwalkan
 
 Fitur di luar PRD 2.1, integrasi darurat resmi tanpa perjanjian, navigasi offline penuh, musik komersial tanpa lisensi, video call, dan integrasi ECU/OBD tidak masuk roadmap ini (PRD 2.2).
+
+## 11. Phase 6.2 — storage lifecycle & Android media (selesai 27 November 2026)
+
+Status: **selesai untuk lingkup 6.2**; belum menjadi gate production.
+
+Yang tertutup:
+
+- Pembersihan upload kedaluwarsa (HEAD → CAS → outbox → lepas reservasi).
+- Worker penghapusan terjadwal, aman multi-instance, dead-letter termonitor.
+- Kuota penyimpanan per pengguna dengan reservasi atomik dan rekonsiliasi.
+- Audit otorisasi unduh dan capability URL.
+- Integrasi Android: upload, checksum streaming, retry, avatar, foto kendaraan.
+
+Yang menjadi pekerjaan fase berikutnya (belum dikerjakan):
+
+- Provider scanning/moderation nyata dan alur karantina.
+- IAM/STS least privilege, bucket policy, SSE, dan pengujian terhadap AWS nyata.
+- Endpoint penghapusan media sehingga aset tak terpakai berhenti memakan kuota.
+
+## 12. Phase 6.3 — penghapusan, observability, scanning (selesai 27 November 2026)
+
+Yang tertutup:
+
+- `DELETE /v1/media/:id` dengan pemeriksaan referensi dan outbox transaksional.
+- Kuota yang menghitung media `deleting` sampai objek benar-benar hilang.
+- Penggantian avatar/foto kendaraan yang melepas referensi secara atomik.
+- Admin health endpoint untuk worker penghapusan, pembersihan upload, dan scan.
+- Adapter ClamAV nyata + scan worker dengan retry, karantina, dan fail-closed.
+
+Yang masih terbuka (bukan bagian fase ini):
+
+- Uji terhadap clamd sungguhan (butuh container) dan provider moderasi konten.
+- Instrumented test Android di emulator/perangkat.
+- IAM/STS, bucket policy, SSE, dan verifikasi AWS nyata.
+- Video upload di Android (belum masuk scope).
+
+## 13. Phase 6.4 — reliability & verification closure (selesai 27 November 2026)
+
+Lingkup: pemulihan penghapusan, pembatalan aman, dead-letter recovery, integrasi
+ClamAV nyata (lokal BLOCKED, CI disiapkan), moderasi konten manual sebagai sumbu
+terpisah, alerting operasional provider-agnostic, audit lint Android, dan
+dokumentasi operasional.
+
+Yang ditutup dari 6.3: status `deleting` tanpa batas waktu, tidak ada cara
+pembatalan, tidak ada jalur retry dead letter, moderasi belum ada, alert belum
+ada, dan tiga warning lint yang bersifat correctness/security.
+
+Yang tetap terbuka dan menjadi kandidat fase berikutnya: penyedia moderasi
+eksternal (butuh kredensial), pengiriman notifikasi (butuh provider), layar
+composer video di Android, uji perangkat nyata, dan validasi AWS/IAM.
+
+## Status verifikasi (PHASE 6.5)
+
+SeaweedFS 4.55 dan ClamAV 1.4.7 diuji nyata secara lokal (PASS). GitHub Actions,
+emulator, PostgreSQL/PostGIS nyata, AWS S3 tetap BLOCKED. Lihat `PHASE_6_5_REPORT.md`.
+
+## 13. Phase 6.5.2 — emulator infrastructure & E2E perangkat (selesai 28 November 2026)
+
+Hasil: blocker emulator tertutup dan suite perangkat berjalan nyata.
+
+- Akar masalah: `/dev/kvm` ada tetapi tidak bisa dibuka user runner, sehingga
+  action menambahkan `-accel off` yang ditolak emulator 37. Perbaikan: udev 0666
+  + assert read/write + `disable-linux-hw-accel: false`. Tanpa TCG.
+- Emulator API 34 dan 36 boot di `ubuntu-latest`; 26 instrumented test lulus di
+  kedua API (run `46097769865`, commit `eb8ee59`).
+- Gate hasil test berbasis manifest 26 id, dengan summary JSON per API.
+- Suite berjalan terhadap backend nyata: PostGIS, migrasi, SeaweedFS, API.
+
+Langkah berikutnya (bukan bagian fase ini): ClamAV di job emulator untuk matriks
+status scan, process death + WorkManager recovery, gangguan jaringan,
+screenshot saat gagal, lalu provider notifikasi/moderasi dan staging AWS.
+Rincian: `PHASE_6_5_2_REPORT.md`.

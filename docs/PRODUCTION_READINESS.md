@@ -176,3 +176,113 @@ Yang **belum** selesai:
 - [ ] **BLOCKED** MinIO sebagai target uji: server open-source MinIO sudah diarsipkan dan tidak lagi didistribusikan (`dl.min.io` → HTTP 410, repositori Docker Hub hilang).
 - [ ] Belum ada lifecycle untuk intent `pending` yang ditinggalkan (objek yatim) atau pemindaian malware.
 - [ ] Android belum memiliki layar unggah media; kontrak baru belum dipakai klien mana pun.
+
+## 13. Phase 6.2 — storage lifecycle dan Android media (27 November 2026)
+
+Legend: PASS = diverifikasi dengan bukti yang dijalankan; BLOCKED = butuh
+environment/kredensial/provider yang tidak tersedia; FAIL = gagal.
+
+| Butir | Status | Bukti / catatan |
+| --- | --- | --- |
+| Pembersihan intent kedaluwarsa | PASS | `cleanupExpired()` + 3 test (`phase6_2.test.ts`) |
+| Orphan object dibersihkan | PASS | HEAD → CAS → outbox dalam satu transaksi |
+| Race complete vs expiration | PASS | test khusus; hasil selalu penolakan tunggal |
+| Race complete vs deletion | PASS | objek hilang → `409 MEDIA_OBJECT_MISSING` |
+| Worker periodik | PASS | `startScheduled()` dari `main.ts`, test scheduler |
+| Multi-instance aman | PASS | `SKIP LOCKED` + test dua worker |
+| Dead-letter dapat dimonitor | PASS | `status().failed` + test batas percobaan |
+| Kuota konsisten | PASS | CAS reservasi + `reconcile`, test 6 intent paralel |
+| Otorisasi unduh | PASS | capability URL terikat id+expiry, test lintas media |
+| Migrasi 0011 | PASS | dijalankan `runMigrations` pada setiap suite |
+| Android: upload intent/PUT/complete | PASS | `MediaRepository` + kontrak backend |
+| Android: header presigned | PASS | `MediaUploadRequest` hanya 2 header, unit test |
+| Android: SHA-256 streaming | PASS | `MediaChecksum`, vektor `abc` + payload > buffer |
+| Android: state Room + WorkManager | PASS | `MediaUploadDao`, `MediaUploadWorker` |
+| Android lint + unit test + debug build | PASS | Gradle `lintDebug testDebugUnitTest assembleDebug` |
+| Storage integration (SeaweedFS 4.55) | PASS (CI) | job `media-integration`, bukan dijalankan lokal |
+| AWS S3/IAM/STS nyata | BLOCKED | tidak ada kredensial AWS di environment ini |
+| Antivirus/CSAM/moderation provider | BLOCKED | belum ada provider; media tetap `unscanned` |
+| Instrumented test Android (emulator) | BLOCKED | tidak ada emulator/perangkat |
+
+Environment yang dibutuhkan untuk build Android lokal: JDK 21 (AGP 8.11 menolak
+JDK 25). CI memakai `temurin 21`. Di mesin ini JDK 21 dipasang di
+`android/.tooling/` (gitignored) karena hanya JDK 8 dan 25 yang tersedia.
+
+## 14. Phase 6.3 — penghapusan, observability, dan scanning (27 November 2026)
+
+| Butir | Status | Bukti |
+| --- | --- | --- |
+| Endpoint `DELETE /v1/media/:id` | PASS | `media.controller.ts` + 4 test |
+| Penegakan kepemilikan | PASS | non-owner → `404`, anonim → `401` |
+| Deteksi referensi | PASS | 8 tabel + album, `409 MEDIA_IN_USE` |
+| Penggantian avatar aman | PASS | transaksi + `detachAndRelease` + test |
+| Penggantian foto kendaraan aman | PASS | test `vehicle` + detach |
+| Outbox transaksional | PASS | CAS + insert satu transaksi |
+| Verifikasi penghapusan objek | PASS | `HEAD` setelah `delete` |
+| Double deletion idempoten | PASS | test khusus |
+| Kuota dilepas setelah objek hilang | PASS | `usedBytes` termasuk `deleting` |
+| Endpoint admin health | PASS | `/v1/admin/media/workers` |
+| Endpoint dilindungi admin | PASS | `AdminGuard`; user biasa 401/403 |
+| Dead-letter & antrean terlihat | PASS | `health()` |
+| Scanner adapter nyata | PASS | `ClamAvMediaScanner` (protokol INSTREAM) |
+| Uji terhadap clamd nyata | BLOCKED | tidak ada Docker/daemon ClamAV di mesin ini |
+| Scanner gagal ≠ clean | PASS | test `scan_failed` + attempt limit |
+| Karantina | PASS | `quarantined` tidak dapat diakses publik |
+| Media publik fail-closed | PASS | non-owner butuh `scan_status = 'clean'` |
+| Provider content moderation | BLOCKED | belum ada provider/kredensial |
+| Android: hapus/ganti avatar | PASS | PATCH `avatarMediaId` + release server-side |
+| Android: hapus/ganti foto kendaraan | PASS | PATCH `photoMediaId` + release |
+| Android: kuota tampil | PASS | `refreshQuota()` + ProfileScreen |
+| Android: video upload | BLOCKED | belum ada layar composer posting/album di Android |
+| Device/emulator test | BLOCKED | tidak ada emulator/perangkat |
+| GitHub Actions hijau | BLOCKED | workflow belum dijalankan pada perubahan ini |
+
+Environment scanning: `MEDIA_SCANNER=clamav`, `CLAMAV_HOST`, `CLAMAV_PORT`
+(default 3310), `CLAMAV_TIMEOUT_MS`, `MEDIA_SCAN_MAX_ATTEMPTS`,
+`MEDIA_SCAN_POLL_SECONDS`, `MEDIA_SCAN_BATCH_SIZE`, `MEDIA_SCAN_RETRY_SECONDS`.
+Tanpa `MEDIA_SCANNER=clamav` dan host yang dapat dijangkau, media tetap
+`unscanned` dan tidak pernah disajikan ke pengguna lain.
+
+## 15. Phase 6.4 — reliability dan verifikasi (27 November 2026)
+
+| Area | Status | Bukti |
+| --- | --- | --- |
+| Pemulihan baris `deleting` macet | PASS | `phase6_4.test.ts` (requeue vs `deleted`, kuota tetap ditahan) |
+| Lease & retry worker penghapusan | PASS | `phase6_4.test.ts`, `phase6_3.test.ts` |
+| Pembatalan sebelum klaim | PASS | `phase6_4.test.ts` (200 → `ready`, job ditarik) |
+| Pembatalan setelah klaim / selesai | PASS | `409` dengan kode berbeda |
+| Dead-letter: daftar, retry, audit | PASS | `phase6_4.test.ts` |
+| Moderasi terpisah dari scanning | PASS | `phase6_4.test.ts` (`scan_status` tidak berubah) |
+| Kebijakan visibilitas ganda | PASS | `phase6_4.test.ts` (clean tapi belum ditinjau → 404) |
+| Admin queue + preview aman + riwayat | PASS | build admin, review manual belum dilakukan |
+| Alert dedup, cooldown, recovery | PASS | `phase6_4.test.ts` |
+| Pengiriman notifikasi eksternal | BLOCKED | tidak ada provider/kredensial; `available() === false` |
+| ClamAV daemon nyata (1.4.7, Windows) | PASS (lokal) | 10/10 test `clamav.integration.test.ts` lulus; EICAR terdeteksi, karantina, retry, lease recovery |
+| SeaweedFS 4.55 (lokal) | PASS (lokal) | 11/11 test `media.integration.test.ts` lulus; SigV4, HEAD, SHA-256, GET, delete, retry |
+| ClamAV daemon nyata (CI image 1.4.2) | BLOCKED | workflow ditulis, belum dieksekusi; versi berbeda dari lokal |
+| SeaweedFS di CI | BLOCKED | workflow ditulis, belum dieksekusi |
+| AWS S3 produksi | BLOCKED | tidak diuji, tidak diklaim |
+| Device/emulator Android | BLOCKED | tidak ada emulator; instrumented test disiapkan |
+| Video upload Android | BLOCKED | belum ada layar composer; backend siap |
+| AWS S3 produksi | BLOCKED | tidak diuji, tidak diklaim |
+
+Yang **tidak** boleh diklaim dari fase ini: pemindaian malware terbukti bekerja
+di mesin pengembang, notifikasi benar-benar terkirim, moderasi otomatis aktif,
+atau kesiapan produksi AWS.
+
+## 13. Phase 6.5.2 — verifikasi perangkat Android (28 November 2026)
+
+- [x] **LULUS** Emulator API 34 dan API 36 boot di CI (`sys.boot_completed=1`)
+  dan menjalankan 26 instrumented test, semuanya lulus di kedua API.
+  Run `46097769865` (run #23), commit `eb8ee59`.
+- [x] **LULUS** Gate hasil test berbasis manifest: report kosong, test hilang,
+  skip, gagal, atau manifest yang tidak cocok dengan sumber membuat job merah.
+- [ ] **BELUM** Matriks status scan (unscanned/clean/quarantined/pending/
+  approved/rejected) untuk penonton selain pemilik: job E2E belum menjalankan
+  ClamAV, dan pemilik selalu bisa membaca medianya sendiri.
+- [ ] **BELUM** Process death, WorkManager recovery, gangguan jaringan, dan
+  kuota habis di perangkat.
+- [ ] **BLOCKED** FGS/lokasi latar belakang di perangkat, Play Billing,
+  staging, dan AWS nyata — tidak berubah dari Phase 6.1–6.5.1.
+
+Status keseluruhan tetap **BELUM SIAP PRODUKSI**. Detail: `PHASE_6_5_2_REPORT.md`.

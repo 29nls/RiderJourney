@@ -8,6 +8,10 @@ import { DATABASE, type Database } from '../db/database.js';
 import { BillingService } from '../billing/billing.service.js';
 import { RedeemService } from '../redeem/redeem.service.js';
 import { RetentionService } from '../ops/retention.service.js';
+import { ModerationService, type ModerationAction } from '../media/moderation.service.js';
+import { MediaService } from '../media/media.service.js';
+import { MediaDeletionWorker } from '../media/deletion-outbox.js';
+import { AlertService } from '../media/alerting.js';
 import { AdminAuditService } from './admin.audit.js';
 import { AdminStepUpService } from './step-up.service.js';
 import { hasPermission, type AdminActor, type AdminPermission } from './admin.types.js';
@@ -26,6 +30,10 @@ export class AdminService {
     private readonly billing: BillingService,
     private readonly redeem: RedeemService,
     private readonly retention: RetentionService,
+    private readonly moderation: ModerationService,
+    private readonly media: MediaService,
+    private readonly deletion: MediaDeletionWorker,
+    private readonly alerts: AlertService,
   ) {}
 
   private allow(actor: AdminActor, permission: AdminPermission): void {
@@ -47,7 +55,7 @@ export class AdminService {
       'dashboard.read', 'users.read', 'users.suspend', 'users.ban', 'reports.read', 'reports.act',
       'posts.read', 'posts.moderate', 'communities.read', 'communities.moderate', 'subscriptions.read',
       'subscriptions.manage', 'redeem.manage', 'config.read', 'config.write', 'audit.read', 'jobs.run',
-      'billing.reconcile',
+      'billing.reconcile', 'media.read', 'media.moderate', 'media.ops',
     ];
     return {
       userId: actor.userId,
@@ -347,6 +355,129 @@ export class AdminService {
       }, tx);
     });
     return { id: communityId, moderationStatus: status };
+  }
+
+  // -------------------------------------------------------------------------
+  // Media moderation. Review decisions never touch scan_status: clearing a
+  // quarantine is a malware question, approving content is a policy question.
+  // -------------------------------------------------------------------------
+
+  async mediaModerationQueue(
+    actor: AdminActor,
+    query: { status?: string; purpose?: string; limit?: number; before?: string },
+  ) {
+    this.allow(actor, 'media.read');
+    const [queue, summary] = await Promise.all([
+      this.moderation.queue(query),
+      this.moderation.summary(),
+    ]);
+    return { ...queue, summary };
+  }
+
+  async mediaPreview(actor: AdminActor, mediaId: string) {
+    this.allow(actor, 'media.read');
+    return this.media.previewForReview(mediaId);
+  }
+
+  async mediaModerationHistory(actor: AdminActor, mediaId: string) {
+    this.allow(actor, 'media.read');
+    return this.moderation.history(mediaId);
+  }
+
+  async moderateMedia(
+    actor: AdminActor,
+    mediaId: string,
+    action: ModerationAction,
+    reason: string | undefined,
+    requestId?: string,
+  ) {
+    this.allow(actor, 'media.moderate');
+    const result = await this.moderation.decide(actor.userId, mediaId, action, reason);
+    await this.audit.record({
+      actorId: actor.userId,
+      action: `media.${action}`,
+      targetType: 'media',
+      targetId: mediaId,
+      reason: reason ?? `media ${action}`,
+      before: null,
+      after: { moderationStatus: result.moderationStatus },
+      requestId,
+    });
+    return result;
+  }
+
+  async reopenMedia(actor: AdminActor, mediaId: string, reason: string, requestId?: string) {
+    this.allow(actor, 'media.moderate');
+    const result = await this.moderation.reopen(actor.userId, mediaId, reason);
+    await this.audit.record({
+      actorId: actor.userId,
+      action: 'media.reopen',
+      targetType: 'media',
+      targetId: mediaId,
+      reason,
+      before: null,
+      after: { moderationStatus: 'pending_review' },
+      requestId,
+    });
+    return result;
+  }
+
+  // -------------------------------------------------------------------------
+  // Deletion operations: dead-letter visibility and retry.
+  // -------------------------------------------------------------------------
+
+  async deletionFailed(actor: AdminActor, limit?: number) {
+    this.allow(actor, 'media.ops');
+    return this.deletion.failedJobs(limit);
+  }
+
+  async retryDeletion(actor: AdminActor, outboxId: string, note: string | undefined, requestId?: string) {
+    this.allow(actor, 'media.ops');
+    const result = await this.deletion.retryDeadLetter(actor.userId, outboxId, note);
+    if (!result) {
+      throw new ConflictException({
+        code: 'DELETION_NOT_FAILED',
+        title: 'Job bukan dead-letter',
+        detail: 'Hanya job berstatus failed yang dapat diulang.',
+      });
+    }
+    await this.audit.record({
+      actorId: actor.userId,
+      action: 'media.deletion.retry',
+      targetType: 'media_deletion_outbox',
+      targetId: outboxId,
+      reason: note ?? 'operator retry of dead-lettered job',
+      before: { status: 'failed' },
+      after: { status: 'pending' },
+      requestId,
+    });
+    return result;
+  }
+
+  async reconcileDeletions(actor: AdminActor, requestId?: string) {
+    this.allow(actor, 'media.ops');
+    const result = await this.deletion.reconcileStale();
+    await this.audit.record({
+      actorId: actor.userId,
+      action: 'media.deletion.reconcile',
+      targetType: 'media_assets',
+      targetId: 'stale',
+      reason: 'stale deletion reconciliation',
+      before: null,
+      after: result,
+      requestId,
+    });
+    return result;
+  }
+
+  async alertEvents(actor: AdminActor, query: { status?: string; limit?: number }) {
+    this.allow(actor, 'media.read');
+    return this.alerts.list(query);
+  }
+
+  async evaluateAlerts(actor: AdminActor) {
+    this.allow(actor, 'media.ops');
+    return this.alerts.evaluate();
   }
 
   async listSubscriptions(actor: AdminActor, query: ListQueryDto) {

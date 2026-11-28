@@ -1,6 +1,6 @@
 package id.riderjourney.app.ui.components
 
-import android.graphics.Color
+import androidx.core.graphics.toColorInt
 import android.os.Bundle
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -157,7 +157,7 @@ fun RiderMap(
             if (style.getLayer(ROUTE_LAYER) == null) {
                 style.addLayer(
                     LineLayer(ROUTE_LAYER, ROUTE_SOURCE).withProperties(
-                        lineColor(Color.parseColor("#FF6B3D")),
+                        lineColor("#FF6B3D".toColorInt()),
                         lineWidth(4f),
                     ),
                 )

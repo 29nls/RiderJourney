@@ -1,7 +1,8 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { v7 as uuidv7 } from 'uuid';
 import { DATABASE, type Database } from '../db/database.js';
 import { toPublicUser, type UserRow } from '../auth/auth.types.js';
+import { MediaService } from '../media/media.service.js';
 import type { ConsentDto, UpdateProfileDto, UpdateSettingsDto } from './users.dto.js';
 
 type SettingsRow = {
@@ -24,7 +25,10 @@ function settingsDto(row: SettingsRow) {
 
 @Injectable()
 export class UsersService {
-  constructor(@Inject(DATABASE) private readonly db: Database) {}
+  constructor(
+    @Inject(DATABASE) private readonly db: Database,
+    private readonly media: MediaService,
+  ) {}
 
   async me(userId: string) {
     const rows = await this.db.query<UserRow>('SELECT * FROM users WHERE id = $1', [userId]);
@@ -39,6 +43,16 @@ export class UsersService {
   }
 
   async updateProfile(userId: string, dto: UpdateProfileDto) {
+    // Read the pointer before the write so the replaced avatar can be evaluated
+    // for deletion in the same transaction that detaches it.
+    let previousAvatar: string | null = null;
+    if (dto.avatarMediaId !== undefined) {
+      const current = await this.db.query<{ avatar_media_id: string | null }>(
+        `SELECT avatar_media_id FROM users WHERE id = $1`,
+        [userId],
+      );
+      previousAvatar = current[0]?.avatar_media_id ?? null;
+    }
     const sets: string[] = [];
     const values: unknown[] = [];
     const map: Array<[keyof UpdateProfileDto, string]> = [
@@ -54,10 +68,47 @@ export class UsersService {
         sets.push(`${column} = $${values.length}`);
       }
     }
-    if (sets.length > 0) {
-      values.push(userId);
-      await this.db.query(`UPDATE users SET ${sets.join(', ')}, updated_at = now() WHERE id = $${values.length}`, values);
+    // Handle avatarMediaId linkage.
+    if (dto.avatarMediaId !== undefined) {
+      if (dto.avatarMediaId === '') {
+        values.push(null);
+        sets.push(`avatar_media_id = $${values.length}`);
+      } else {
+        // Verify media belongs to this user and is ready with purpose 'avatar'.
+        const media = await this.db.query<{ id: string }>(
+          `SELECT id FROM media_assets WHERE id = $1 AND owner_id = $2 AND status = 'ready' AND purpose = 'avatar'`,
+          [dto.avatarMediaId, userId],
+        );
+        if (!media[0]) {
+          throw new UnprocessableEntityException({
+            code: 'MEDIA_NOT_ATTACHABLE',
+            title: 'Media tidak dapat digunakan',
+            detail: 'Avatar harus berupa media yang sudah selesai diunggah dengan purpose avatar.',
+          });
+        }
+        values.push(dto.avatarMediaId);
+        sets.push(`avatar_media_id = $${values.length}`);
+      }
     }
+    const nextAvatar = dto.avatarMediaId === undefined ? undefined : dto.avatarMediaId === '' ? null : dto.avatarMediaId;
+    await this.db.transaction(async (tx) => {
+      if (sets.length > 0) {
+        values.push(userId);
+        await tx.query(`UPDATE users SET ${sets.join(', ')}, updated_at = now() WHERE id = $${values.length}`, values);
+      }
+      if (nextAvatar !== undefined) {
+        // Feeds read rider_profiles.avatar_media_id; users.avatar_media_id is the
+        // column /v1/me reads. Both are written here so the two never disagree.
+        await tx.query(
+          `INSERT INTO rider_profiles (user_id, avatar_media_id) VALUES ($1, $2)
+           ON CONFLICT (user_id) DO UPDATE SET avatar_media_id = EXCLUDED.avatar_media_id, updated_at = now()`,
+          [userId, nextAvatar],
+        );
+        if (previousAvatar && previousAvatar !== nextAvatar) {
+          await this.media.detachAndRelease(tx, userId, previousAvatar, 'avatar_replaced');
+        }
+      }
+    });
     return this.me(userId);
   }
 

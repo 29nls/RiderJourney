@@ -1,4 +1,4 @@
-import { IsBoolean, IsIn, IsObject, IsOptional, IsString, IsUrl, MaxLength, MinLength, ValidateIf } from 'class-validator';
+import { IsBoolean, IsIn, IsObject, IsOptional, IsString, IsUrl, IsUUID, MaxLength, MinLength, ValidateIf } from 'class-validator';
 
 export class UpdateProfileDto {
   @IsOptional()
@@ -27,6 +27,12 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsIn(['public', 'followers', 'private'])
   visibility?: 'public' | 'followers' | 'private';
+
+  /** Link avatar to a ready media asset. Set empty string to clear. */
+  @IsOptional()
+  @ValidateIf((dto: UpdateProfileDto) => dto.avatarMediaId !== '')
+  @IsUUID()
+  avatarMediaId?: string;
 }
 
 export class UpdateSettingsDto {

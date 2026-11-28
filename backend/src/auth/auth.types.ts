@@ -7,6 +7,7 @@ export type UserRow = {
   bio: string | null;
   city: string | null;
   avatar_url: string | null;
+  avatar_media_id: string | null;
   visibility: string;
   status: string;
   email_verified: boolean;
@@ -22,6 +23,7 @@ export type PublicUser = {
   bio: string | null;
   city: string | null;
   avatarUrl: string | null;
+  avatarMediaId: string | null;
   visibility: string;
   status: string;
   emailVerified: boolean;
@@ -37,6 +39,7 @@ export function toPublicUser(row: UserRow): PublicUser {
     bio: row.bio,
     city: row.city,
     avatarUrl: row.avatar_url,
+    avatarMediaId: row.avatar_media_id ?? null,
     visibility: row.visibility,
     status: row.status,
     emailVerified: row.email_verified,

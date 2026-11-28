@@ -33,7 +33,7 @@ before(async () => {
   const applied = await runMigrations(db);
   assert.deepEqual(applied, [
     '0001_init.sql', '0002_convoys.sql', '0003_phase3.sql',
-    '0004_phase4.sql', '0005_community.sql', '0006_phase4_social.sql', '0007_phase5.sql', '0008_phase1.sql', '0009_phase6.sql', '0010_phase6_1.sql',
+    '0004_phase4.sql', '0005_community.sql', '0006_phase4_social.sql', '0007_phase5.sql', '0008_phase1.sql', '0009_phase6.sql', '0010_phase6_1.sql', '0011_phase6_2.sql', '0012_phase6_3.sql', '0013_phase6_4.sql',
   ]);
   const built = await buildTestApp(db);
   app = built.app;
@@ -139,19 +139,28 @@ test('signed URLs gate private media by access and expiry', async () => {
   assert.equal(post.status, 201, JSON.stringify(post.body));
 
   assert.equal((await api.get(`/v1/media/${privateMedia}/url`).set(auth(B.token))).status, 404);
+  // Phase 6.6 fail-closed: private posts are moderated, so the owner gets a URL
+  // only once the scan is clean, and anonymous redemption waits for the
+  // reviewer. Both gates are covered in phase6_6.test.ts; here the rest of the
+  // signed-URL rules (scope, tamper, expiry, instr, public share) are checked.
   const signed = await api.get(`/v1/media/${privateMedia}/url`).set(auth(A.token));
   assert.equal(signed.status, 200, JSON.stringify(signed.body));
-  const served = await api.get(signed.body.url);
+  assert.equal(signed.body.url, null, 'unscanned private media has no bytes yet');
+  await db.query(`UPDATE media_assets SET scan_status = 'clean', moderation_status = 'approved' WHERE id = $1`, [privateMedia]);
+  const granted = await api.get(`/v1/media/${privateMedia}/url`).set(auth(A.token));
+  assert.equal(granted.status, 200, JSON.stringify(granted.body));
+  const served = await api.get(granted.body.url);
   assert.equal(served.status, 200, JSON.stringify(served.body));
   assert.equal(served.body.id, privateMedia);
 
-  const tampered = await api.get(signed.body.url.replace(/signature=[^&]+$/, 'signature=deadbeef'));
+  const tampered = await api.get((granted.body.url as string).replace(/signature=[^&]+$/, 'signature=deadbeef'));
   assert.equal(tampered.status, 401);
   assert.equal(tampered.body.code, 'SIGNED_URL_INVALID');
 
   const mediaService = app.get(MediaService);
   const expired = await mediaService.signGet(A.id, privateMedia, -1);
-  const expiredResponse = await api.get(expired.url);
+  assert.ok(expired.url, 'private media of its own owner still mints a URL');
+  const expiredResponse = await api.get(expired.url as string);
   assert.equal(expiredResponse.status, 401);
   assert.equal(expiredResponse.body.code, 'SIGNED_URL_EXPIRED');
 
@@ -160,6 +169,16 @@ test('signed URLs gate private media by access and expiry', async () => {
     clientPostId: 'post_signed_public_0001', kind: 'photo', audience: 'public', mediaIds: [publicMedia.id],
   });
   assert.equal(publicPost.status, 201, JSON.stringify(publicPost.body));
+  // Phase 6.3 is fail-closed on scan state: a public post is not enough while
+  // the media has not been scanned. Marking it clean models a completed scan.
+  const unscanned = await api.get(`/v1/media/${publicMedia.id}/url`).set(auth(B.token));
+  assert.equal(unscanned.status, 404, 'unscanned media must not be served publicly');
+  await db.query(`UPDATE media_assets SET scan_status = 'clean' WHERE id = $1`, [publicMedia.id]);
+  // Phase 6.4 adds a second, independent gate: community content is only public
+  // once a reviewer approves it, even when the file itself is clean.
+  const cleanButUnreviewed = await api.get(`/v1/media/${publicMedia.id}/url`).set(auth(B.token));
+  assert.equal(cleanButUnreviewed.status, 404, 'unreviewed content stays private');
+  await db.query(`UPDATE media_assets SET moderation_status = 'approved' WHERE id = $1`, [publicMedia.id]);
   const shared = await api.get(`/v1/media/${publicMedia.id}/url`).set(auth(B.token));
   assert.equal(shared.status, 200, JSON.stringify(shared.body));
 });

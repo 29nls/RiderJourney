@@ -48,6 +48,26 @@ cd android
 
 Build Android memerlukan `JAVA_HOME` ke JDK 21; Gradle 8.13 menolak JDK 25.
 
+Test perangkat (instrumented) memerlukan emulator yang benar-benar boot:
+
+```bash
+cd android
+./gradlew connectedDebugAndroidTest
+# gate ketat: setiap test di android/tools/required-connected-tests.txt harus jalan dan lulus
+cd .. && node android/tools/check-connected-results.mjs --api 34 --boot 1 --summary /tmp/summary.json
+```
+
+Suite perangkat menembak backend nyata di `BuildConfig.API_BASE_URL`
+(default `http://10.0.2.2:3000`, loopback host dari dalam emulator). Untuk unggah
+media, URL presigned ditandatangani untuk `127.0.0.1:8333`, jadi jalankan
+`adb reverse tcp:8333 tcp:8333` sebelum test; itu yang dilakukan CI.
+
+CI menjalankan emulator API 34 dan API 36 di `ubuntu-latest` dengan `/dev/kvm`
+bermode 0666 (udev rule) dan `disable-linux-hw-accel: false`, karena action akan
+menambahkan `-accel off` bila `/dev/kvm` tidak bisa dibaca user runner — dan
+emulator 37 menolak flag itu. Bukti: run #23 `46097769865`, 26/26 test lulus di
+kedua API; lihat `PHASE_6_5_2_REPORT.md`.
+
 ## Penyimpanan media
 
 Media memakai bucket S3 privat dengan presigned SigV4. Variabel yang dibutuhkan:
@@ -62,9 +82,47 @@ MEDIA_S3_FORCE_PATH_STYLE=true             # MinIO/S3-compatible; false untuk vi
 MEDIA_UPLOAD_TTL_SECONDS=300
 MEDIA_DELETION_MAX_ATTEMPTS=5
 MEDIA_DELETION_BACKOFF_SECONDS=30
+MEDIA_DELETION_POLL_SECONDS=60
+MEDIA_DELETION_BATCH_SIZE=20
+MEDIA_UPLOAD_CLEANUP_INTERVAL_SECONDS=300
+MEDIA_QUOTA_BYTES_DEFAULT=209715200
+MEDIA_SCANNER=clamav                      # 'none' (default) keeps media unscanned
+CLAMAV_HOST=127.0.0.1
+CLAMAV_PORT=3310
+CLAMAV_TIMEOUT_MS=30000
+MEDIA_SCAN_MAX_ATTEMPTS=3
+MEDIA_SCAN_POLL_SECONDS=120
+MEDIA_SCAN_BATCH_SIZE=5
+MEDIA_SCAN_RETRY_SECONDS=300
 ```
 
-Bucket harus privat. Worker penghapusan objek dijalankan dengan `npm run media:purge` (status) atau `npm run media:purge -- --run`.
+Bucket harus privat. Dua worker berjalan otomatis saat API start dan hanya bila
+`MEDIA_S3_BUCKET`, `MEDIA_S3_ACCESS_KEY`, dan `MEDIA_S3_SECRET_KEY` terisi:
+
+- **Pembersihan upload** (`MEDIA_UPLOAD_CLEANUP_INTERVAL_SECONDS`) meng-expire
+  intent `pending` yang lewat jendela unggah, memeriksa objeknya dengan `HEAD`,
+  dan meng-enqueue penghapusan objek orphan dalam transaksi yang sama.
+- **Penghapusan objek** (`MEDIA_DELETION_POLL_SECONDS`, batch
+  `MEDIA_DELETION_BATCH_SIZE`) memakai `FOR UPDATE SKIP LOCKED`, sehingga aman
+  dijalankan pada beberapa instance backend. Job yang gagal di-retry dengan
+  backoff eksponensial lalu menjadi dead-letter setelah
+  `MEDIA_DELETION_MAX_ATTEMPTS`.
+
+Untuk inspeksi manual: `npm run media:purge` (status) atau
+`npm run media:purge -- --run`. Laporan status memuat `pending`, `processing`,
+`done`, dan `failed` (dead-letter).
+
+Kuota penyimpanan per pengguna disimpan di `storage_quotas`; `usedBytes`
+diturunkan dari media berstatus `ready` **dan** `deleting` (byte yang masih ada
+di bucket), sedangkan upload yang belum selesai hanya menahan `reservedBytes`.
+Media baru berhenti dihitung setelah worker memverifikasi objeknya hilang.
+Klien melihat semua angka itu lewat `GET /v1/media/quota`.
+
+Media yang masih dipakai post, album, trip, poster, hazard, avatar, atau
+kendaraan tidak dapat dihapus: `DELETE /v1/media/:id` menjawab
+`409 MEDIA_IN_USE` beserta daftar referensinya. Health worker storage
+(pending, dead-letter, umur job tertua, hasil scan) tersedia untuk admin di
+`GET /v1/admin/media/workers`.
 
 Untuk menjalankan uji integrasi storage di lokal, nyalakan server S3-compatible sungguhan (lihat `PHASE_6_1_REPORT.md`; MinIO open-source tidak lagi didistribusikan), lalu:
 
@@ -87,7 +145,25 @@ Ringkas:
 
 - Backend: auth, profil, privasi, garasi, peta/rute, trip, konvoi, realtime, chat, bahaya, media, sosial, komunitas, billing (mati secara default), redeem, admin RBAC, retensi.
 - Android: auth, profil, garasi, peta/rute, perekaman trip, konvoi + lokasi langsung, chat konvoi, laporan bahaya.
-- Android belum memiliki: layar consent/privasi, penghapusan akun, unggah media, dan tempat favorit.
-- Media pipeline backend belum terverifikasi terhadap object storage nyata; lihat known limitations di laporan fase 6.
+- Android sudah memiliki unggah media (avatar profil dan foto kendaraan) dengan
+  SHA-256 streaming, retry WorkManager, dan state di Room.
+- Android belum memiliki: layar consent/privasi, penghapusan akun, dan tempat favorit.
+- Media pipeline sudah diuji terhadap SeaweedFS 4.55 di CI, tetapi belum terhadap
+  AWS nyata; lihat `PHASE_6_2_REPORT.md` bagian production blockers.
+- Test perangkat Android berjalan di emulator nyata (API 34 dan 36) sejak Phase
+  6.5.2: 26 instrumented test, semuanya lulus di kedua API. Cakupan yang belum
+  ada: matriks status scan untuk penonton lain, process death, dan gangguan
+  jaringan; rincian di `PHASE_6_5_2_REPORT.md` bagian 14.
 
 Jangan mengaktifkan `BILLING_ENABLED` atau `PAID_FEATURES_ENABLED` tanpa checklist di `docs/PRODUCTION_READINESS.md`.
+
+Phase 6.4 menambahkan pemulihan penghapusan (reconcile + pembatalan + retry dead
+letter), moderasi konten manual yang terpisah dari pemindaian malware, alerting
+operasional berbasis tabel, dan integrasi ClamAV nyata di CI. Lihat
+`docs/MEDIA_OPERATIONS_RUNBOOK.md`, `docs/MEDIA_MODERATION_POLICY.md`, dan
+`docs/SCANNER_INTEGRATION.md`. Ringkasan hasil: `PHASE_6_4_REPORT.md`.
+
+Phase 6.5 (verifikasi) menutup sebagian blocker: SeaweedFS 4.55 dan ClamAV 1.4.7
+diuji nyata secara lokal (11/11 dan 10/10 lulus), backend suite 86/0/17,
+Android 22/22 unit + 28 warning lint. GitHub Actions, emulator, PostgreSQL/PostGIS
+nyata, dan AWS S3 tetap BLOCKED. Ringkasan: `PHASE_6_5_REPORT.md`.
