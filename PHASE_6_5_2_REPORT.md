@@ -3,7 +3,7 @@
 Tanggal: 28 November 2026
 Repository: `29nls/RiderJourney`, branch `verify/phase-6.5`
 Baseline sebelum fase: `6452ca3`
-Commit akhir fase: `eb8ee59`
+Commit akhir fase: `eb8ee59` (kode dan workflow) + `b270247` (dokumentasi)
 Fase sebelumnya: `PHASE_6_5_REPORT.md`, `PHASE_6_5_1_REPORT.md`
 
 ---
@@ -62,6 +62,7 @@ recovery belum diuji. Rinciannya di bagian 14.
 | `c841e49` | `chmod +x gradlew` |
 | `91554e3` | graph test tanpa `@EntryPoint`, gate rekursif, perbaikan test expiry |
 | `eb8ee59` | PUT memakai header yang ditandatangani, regex tamper `X-Amz-Signature` |
+| `b270247` | laporan 6.5.2 + README, TEST_PLAN, PRODUCTION_READINESS, REQUIREMENTS_MATRIX, ROADMAP |
 
 Pekerjaan 6.1–6.5.1 tidak diubah. Satu-satunya perubahan pada kode produk adalah
 dua `Modifier.testTag` di `AuthScreen.kt` dan `AppRoot.kt` (3 tag auth + tag tab),
