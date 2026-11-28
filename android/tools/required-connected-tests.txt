@@ -1,0 +1,39 @@
+# Mandatory instrumented tests for the connected gate.
+#
+# One `fully.qualified.Class#method` per line. The gate fails when a listed test
+# is absent, skipped, failed or errored, and it also fails when a listed method
+# does not exist in android/app/src/androidTest, so this file cannot quietly
+# drift away from the suite. Merely running one unrelated test is not a pass.
+
+id.riderjourney.app.e2e.AuthenticationE2ETest#registerReturnsASessionTheApiAccepts
+id.riderjourney.app.e2e.AuthenticationE2ETest#loginAfterLogoutRestoresTheSameAccount
+id.riderjourney.app.e2e.AuthenticationE2ETest#storedTokensSurviveANewRepositoryInstance
+id.riderjourney.app.e2e.AuthenticationE2ETest#expiredAccessTokenIsRefreshedFromTheStoredRefreshToken
+id.riderjourney.app.e2e.AuthenticationE2ETest#requestWithoutATokenIsRejected
+
+id.riderjourney.app.e2e.ProfileMediaE2ETest#uploadedAvatarBecomesTheProfileAvatarAndIsReadable
+id.riderjourney.app.e2e.ProfileMediaE2ETest#replacingTheAvatarMovesTheReferenceToTheNewMedia
+id.riderjourney.app.e2e.ProfileMediaE2ETest#removingTheAvatarClearsTheProfileReference
+id.riderjourney.app.e2e.ProfileMediaE2ETest#quotaCountsTheBytesOfAnUploadedAvatar
+id.riderjourney.app.e2e.ProfileMediaE2ETest#deletingAnUnreferencedMediaReportsDeleting
+
+id.riderjourney.app.e2e.VehicleMediaE2ETest#addingAVehicleWithAPhotoStoresTheReference
+id.riderjourney.app.e2e.VehicleMediaE2ETest#garageListReportsTheVehiclePhoto
+id.riderjourney.app.e2e.VehicleMediaE2ETest#replacingTheVehiclePhotoSwapsTheReference
+id.riderjourney.app.e2e.VehicleMediaE2ETest#clearingTheVehiclePhotoRemovesTheReference
+id.riderjourney.app.e2e.VehicleMediaE2ETest#aPhotoStillUsedByAVehicleCannotBeDeleted
+
+id.riderjourney.app.e2e.MediaSecurityE2ETest#anotherAccountCannotMintASignedUrlForMyMedia
+id.riderjourney.app.e2e.MediaSecurityE2ETest#anotherAccountCannotDeleteMyMedia
+id.riderjourney.app.e2e.MediaSecurityE2ETest#aSignedCapabilityIsBoundToItsMediaId
+id.riderjourney.app.e2e.MediaSecurityE2ETest#signedOutClientCannotMintASignedUrl
+
+id.riderjourney.app.e2e.MediaRecoveryE2ETest#repeatingTheSameClientMediaIdDoesNotCreateASecondMedia
+id.riderjourney.app.e2e.MediaRecoveryE2ETest#aTamperedPresignedUrlIsRejectedAndAFreshIntentUploads
+id.riderjourney.app.e2e.MediaRecoveryE2ETest#completingAnIntentWithoutTheObjectFails
+
+id.riderjourney.app.e2e.UiJourneyE2ETest#appShowsTheAuthFormWithoutASession
+id.riderjourney.app.e2e.UiJourneyE2ETest#loginThroughTheFormOpensTheProfileTab
+
+id.riderjourney.app.data.MediaContentUriTest#contentUriIsReadableThroughContentResolver
+id.riderjourney.app.data.MediaContentUriTest#presignedIntentExpiryUsesAMargin

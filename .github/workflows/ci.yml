@@ -291,7 +291,35 @@ jobs:
           if-no-files-found: warn
 
   android-emulator:
+    # Real connected tests on a booted emulator, one job per API level.
+    #
+    # The udev rule is load-bearing, not cosmetic: the emulator action resolves
+    # disable-linux-hw-accel=auto with accessSync('/dev/kvm', R_OK|W_OK), and
+    # appends `-accel off` when that throws. `-accel off` is exactly what makes
+    # emulator 35 abort with "Software CPU emulation (-accel off) is not
+    # supported", which is what turned run #13 green with zero tests executed.
+    # The KVM assertion below therefore checks readability and writability, not
+    # the existence of the node.
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        api-level: [34, 36]
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: riderjourney
+          POSTGRES_PASSWORD: riderjourney
+          POSTGRES_DB: riderjourney
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U riderjourney"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     defaults:
       run:
         working-directory: android
@@ -302,26 +330,126 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v4
-      - run: chmod +x gradlew
-      - name: Enable KVM (prerequisite for the emulator device)
+      - name: KVM must be readable and writable, not merely present
+        working-directory: .
         run: |
-          ls -l /dev/kvm || { echo "::error::/dev/kvm is absent, the emulator can only abort"; exit 1; }
-          echo "kvm:'$(ls -l /dev/kvm)'"
-      - name: Instrumented tests (API 34)
+          sudo tee /etc/udev/rules.d/99-kvm4all.rules > /dev/null <<'RULE'
+          KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"
+          RULE
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          ls -l /dev/kvm
+          if ! test -r /dev/kvm || ! test -w /dev/kvm; then
+            echo '::error::/dev/kvm is not usable by the runner user; the emulator would be forced into -accel off'
+            exit 1
+          fi
+      - name: Start S3-compatible storage, database schema, and API
+        working-directory: .
+        env:
+          DATABASE_URL: postgres://riderjourney:riderjourney@127.0.0.1:5432/riderjourney
+          AUTH_JWT_SECRET: ci-secret-with-at-least-32-characters
+          PLATE_ENCRYPTION_KEY: BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=
+          MEDIA_S3_ENDPOINT: http://127.0.0.1:8333
+          MEDIA_S3_BUCKET: rj-media-e2e
+          MEDIA_S3_REGION: us-east-1
+          MEDIA_S3_ACCESS_KEY: ciaccess
+          MEDIA_S3_SECRET_KEY: cisecret123
+          MEDIA_S3_FORCE_PATH_STYLE: "true"
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/seaweedfs.tar.gz https://github.com/seaweedfs/seaweedfs/releases/download/4.55/linux_amd64.tar.gz
+          mkdir -p /tmp/seaweedfs /tmp/seaweed-data
+          tar -xzf /tmp/seaweedfs.tar.gz -C /tmp/seaweedfs
+          cat > /tmp/seaweed-s3.json <<'JSON'
+          {"identities":[{"name":"ci","credentials":[{"accessKey":"ciaccess","secretKey":"cisecret123"}],"actions":["Admin","Read","Write","List","Tagging"]}]}
+          JSON
+          nohup /tmp/seaweedfs/weed server -dir=/tmp/seaweed-data -s3 -s3.port=8333 \
+            -s3.config=/tmp/seaweed-s3.json -volume.max=50 > /tmp/seaweed.log 2>&1 &
+          for i in $(seq 1 40); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8333/ || true)
+            if [ "$code" = "403" ]; then break; fi
+            sleep 2
+          done
+          cd backend
+          npm ci
+          npm run build
+          # The bucket is created with the same SDK the app's storage path uses,
+          # so a missing bucket fails here rather than 40 device tests later.
+          node --input-type=module <<'NODE'
+          import { S3Client, CreateBucketCommand } from '@aws-sdk/client-s3';
+          const s3 = new S3Client({
+            endpoint: process.env.MEDIA_S3_ENDPOINT,
+            region: process.env.MEDIA_S3_REGION,
+            forcePathStyle: true,
+            credentials: {
+              accessKeyId: process.env.MEDIA_S3_ACCESS_KEY,
+              secretAccessKey: process.env.MEDIA_S3_SECRET_KEY,
+            },
+          });
+          await s3.send(new CreateBucketCommand({ Bucket: process.env.MEDIA_S3_BUCKET }));
+          console.log('bucket ready:', process.env.MEDIA_S3_BUCKET);
+          NODE
+          DATABASE_URL="$DATABASE_URL" npm run migration:run
+          cd ..
+          # NODE_ENV=test disables the HTTP throttler so 26 tests creating their
+          # own accounts are not answered with 429.
+          NODE_ENV=test HOST=0.0.0.0 PORT=3000 nohup node backend/dist/main.js > /tmp/backend.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3000/health > /dev/null 2>&1; then
+              echo 'api ready'
+              curl -fsS http://127.0.0.1:3000/health
+              exit 0
+            fi
+            sleep 1
+          done
+          echo '::error::API never answered /health'
+          tail -60 /tmp/backend.log
+          exit 1
+      - name: Create artifact directory
+        working-directory: .
+        run: mkdir -p artifacts
+      - name: Instrumented tests (API ${{ matrix.api-level }})
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 34
+          api-level: ${{ matrix.api-level }}
           target: google_apis
           arch: x86_64
+          disable-linux-hw-accel: false
+          emulator-boot-timeout: 600
           working-directory: android
-          script: ./gradlew connectedDebugAndroidTest
-      - name: Connected test results must show executed cases
+          script: |
+            set -u
+            {
+              echo "sys.boot_completed=$(adb shell getprop sys.boot_completed | tr -d '\r')"
+              echo "sdk=$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
+              echo "abi=$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
+              echo "avd=$(adb shell getprop ro.kernel.qemu.avd_name | tr -d '\r')"
+            } | tee ../artifacts/boot-api${{ matrix.api-level }}.txt
+            test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
+            # Storage URLs are signed for 127.0.0.1, so the emulator reaches the
+            # host's bucket through adb reverse instead of a LAN address that the
+            # app's network security config forbids in cleartext.
+            adb reverse tcp:8333 tcp:8333
+            adb reverse --list
+            ./gradlew connectedDebugAndroidTest
+      - name: Gate on the mandatory test manifest
         if: always()
-        run: node android/tools/check-connected-results.mjs
-      - name: Upload connected test results
+        working-directory: .
+        run: |
+          boot=$(grep -o 'sys.boot_completed=.*' "artifacts/boot-api${{ matrix.api-level }}.txt" 2>/dev/null | head -1 || true)
+          node android/tools/check-connected-results.mjs \
+            --api "${{ matrix.api-level }}" \
+            --boot "${boot:-unknown}" \
+            --summary "artifacts/connected-summary-api${{ matrix.api-level }}.json"
+      - name: Upload connected results and diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-connected-results
-          path: android/app/build/outputs/androidTest-results/connected
+          name: android-connected-api${{ matrix.api-level }}
+          path: |
+            android/app/build/outputs/androidTest-results/connected
+            android/app/build/reports/androidTests/connected
+            artifacts
+            /tmp/backend.log
+            /tmp/seaweed.log
           if-no-files-found: warn

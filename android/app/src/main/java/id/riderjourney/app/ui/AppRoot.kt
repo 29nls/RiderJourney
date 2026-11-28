@@ -16,6 +16,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.hilt.navigation.compose.hiltViewModel
 
 private data class Tab(val key: String, val label: String, val short: String)
@@ -59,6 +60,7 @@ fun RiderJourneyApp(
                                 onClick = { tab = item.key },
                                 icon = { Text(item.short) },
                                 label = { Text(item.label) },
+                                modifier = Modifier.testTag("tab_${item.key}"),
                             )
                         }
                     }
