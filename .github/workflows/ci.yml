@@ -410,6 +410,7 @@ jobs:
       - name: Create artifact directory
         working-directory: .
         run: mkdir -p artifacts
+      - run: chmod +x gradlew
       - name: Instrumented tests (API ${{ matrix.api-level }})
         uses: reactivecircus/android-emulator-runner@v2
         with:
