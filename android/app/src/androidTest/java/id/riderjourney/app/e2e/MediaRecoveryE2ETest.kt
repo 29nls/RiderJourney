@@ -67,7 +67,9 @@ class MediaRecoveryE2ETest {
 
         val intent = E2e.block { E2e.graph.api().createUploadIntent(request) }
         val signed = intent.uploadUrl!!
-        val tampered = signed.replace(Regex("signature=[^&]+"), "signature=0000000000000000000000000000000000000000000000000000000000000000")
+        // The backend hands out SigV4 URLs, where the signature parameter is
+        // X-Amz-Signature; replacing plain "signature=" would change nothing.
+        val tampered = signed.replace(Regex("X-Amz-Signature=[^&]+"), "X-Amz-Signature=${"0".repeat(64)}")
         assertNotEquals("the fixture actually changed the signature", signed, tampered)
 
         val rejected = E2e.putObject(tampered, bytes)

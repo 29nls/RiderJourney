@@ -10,6 +10,7 @@ import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFact
 import id.riderjourney.app.BuildConfig
 import id.riderjourney.app.data.AuthRepository
 import id.riderjourney.app.data.MediaRepository
+import id.riderjourney.app.data.MediaUploadRequest
 import id.riderjourney.app.data.TokenStore
 import id.riderjourney.app.data.VehicleRepository
 import id.riderjourney.app.data.api.MeDto
@@ -22,7 +23,6 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -158,11 +158,13 @@ object E2e {
         entity.mediaId ?: error("upload of $purpose returned no media id")
     }
 
+    /** Presigned PUT signs Content-Type and If-None-Match, so both must be sent. */
     fun putObject(url: String, bytes: ByteArray): Int = block(60) {
-        val request = Request.Builder()
-            .url(url)
-            .put(bytes.toRequestBody("image/png".toMediaType()))
-            .build()
+        val request = MediaUploadRequest.build(
+            url,
+            "image/png",
+            bytes.toRequestBody("image/png".toMediaType()),
+        )
         storageClient.newCall(request).execute().use { it.code }
     }
 
