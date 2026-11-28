@@ -45,7 +45,10 @@ class MediaContentUriTest {
     @Test
     fun presignedIntentExpiryUsesAMargin() {
         val now = 1_000_000L
-        assertFalse("60s left is inside the margin", MediaChecksum.needsNewIntent(now + 59_000, now))
-        assertTrue("2 minutes left is outside the margin", MediaChecksum.needsNewIntent(now + 120_000, now))
+        // Margin is 60s and the comparison is inclusive, so anything at or under
+        // a minute of remaining validity must be re-issued.
+        assertTrue("59s left is inside the margin", MediaChecksum.needsNewIntent(now + 59_000, now))
+        assertTrue("exactly 60s left is still inside the margin", MediaChecksum.needsNewIntent(now + 60_000, now))
+        assertFalse("2 minutes left is outside the margin", MediaChecksum.needsNewIntent(now + 120_000, now))
     }
 }

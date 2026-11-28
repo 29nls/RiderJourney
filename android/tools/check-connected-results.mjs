@@ -52,7 +52,9 @@ for (const id of manifest) {
 if (!fs.existsSync(resultsDir)) {
   fail(`${resultsDir} does not exist; connectedDebugAndroidTest reported nothing`);
 }
-const xmlFiles = fs.globSync("*.xml", { cwd: resultsDir }).map((p) => path.join(resultsDir, p));
+// Gradle nests the report under a device/ABI directory ({connected}/debug), so
+// the glob has to recurse or a perfectly good run looks like an empty one.
+const xmlFiles = fs.globSync("**/*.xml", { cwd: resultsDir }).map((p) => path.join(resultsDir, p));
 if (xmlFiles.length === 0) fail(`no XML report under ${resultsDir}`);
 
 /** id -> "passed" | "failed" | "error" | "skipped" */
