@@ -419,14 +419,12 @@ jobs:
           disable-linux-hw-accel: false
           emulator-boot-timeout: 600
           working-directory: android
+          # Each line is executed as its own `sh -c`, so a multi-line block or
+          # brace group is a syntax error here.
           script: |
-            set -u
-            {
-              echo "sys.boot_completed=$(adb shell getprop sys.boot_completed | tr -d '\r')"
-              echo "sdk=$(adb shell getprop ro.build.version.sdk | tr -d '\r')"
-              echo "abi=$(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
-              echo "avd=$(adb shell getprop ro.kernel.qemu.avd_name | tr -d '\r')"
-            } | tee ../artifacts/boot-api${{ matrix.api-level }}.txt
+            adb shell getprop sys.boot_completed | tr -d '\r' | tee ../artifacts/boot-api${{ matrix.api-level }}.txt
+            adb shell getprop ro.build.version.sdk | tr -d '\r' | tee -a ../artifacts/boot-api${{ matrix.api-level }}.txt
+            adb shell getprop ro.product.cpu.abi | tr -d '\r' | tee -a ../artifacts/boot-api${{ matrix.api-level }}.txt
             test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
             # Storage URLs are signed for 127.0.0.1, so the emulator reaches the
             # host's bucket through adb reverse instead of a LAN address that the
@@ -438,7 +436,7 @@ jobs:
         if: always()
         working-directory: .
         run: |
-          boot=$(grep -o 'sys.boot_completed=.*' "artifacts/boot-api${{ matrix.api-level }}.txt" 2>/dev/null | head -1 || true)
+          boot=$(head -1 "artifacts/boot-api${{ matrix.api-level }}.txt" 2>/dev/null || true)
           node android/tools/check-connected-results.mjs \
             --api "${{ matrix.api-level }}" \
             --boot "${boot:-unknown}" \
