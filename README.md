@@ -48,6 +48,26 @@ cd android
 
 Build Android memerlukan `JAVA_HOME` ke JDK 21; Gradle 8.13 menolak JDK 25.
 
+Test perangkat (instrumented) memerlukan emulator yang benar-benar boot:
+
+```bash
+cd android
+./gradlew connectedDebugAndroidTest
+# gate ketat: setiap test di android/tools/required-connected-tests.txt harus jalan dan lulus
+cd .. && node android/tools/check-connected-results.mjs --api 34 --boot 1 --summary /tmp/summary.json
+```
+
+Suite perangkat menembak backend nyata di `BuildConfig.API_BASE_URL`
+(default `http://10.0.2.2:3000`, loopback host dari dalam emulator). Untuk unggah
+media, URL presigned ditandatangani untuk `127.0.0.1:8333`, jadi jalankan
+`adb reverse tcp:8333 tcp:8333` sebelum test; itu yang dilakukan CI.
+
+CI menjalankan emulator API 34 dan API 36 di `ubuntu-latest` dengan `/dev/kvm`
+bermode 0666 (udev rule) dan `disable-linux-hw-accel: false`, karena action akan
+menambahkan `-accel off` bila `/dev/kvm` tidak bisa dibaca user runner — dan
+emulator 37 menolak flag itu. Bukti: run #23 `46097769865`, 26/26 test lulus di
+kedua API; lihat `PHASE_6_5_2_REPORT.md`.
+
 ## Penyimpanan media
 
 Media memakai bucket S3 privat dengan presigned SigV4. Variabel yang dibutuhkan:
@@ -130,6 +150,10 @@ Ringkas:
 - Android belum memiliki: layar consent/privasi, penghapusan akun, dan tempat favorit.
 - Media pipeline sudah diuji terhadap SeaweedFS 4.55 di CI, tetapi belum terhadap
   AWS nyata; lihat `PHASE_6_2_REPORT.md` bagian production blockers.
+- Test perangkat Android berjalan di emulator nyata (API 34 dan 36) sejak Phase
+  6.5.2: 26 instrumented test, semuanya lulus di kedua API. Cakupan yang belum
+  ada: matriks status scan untuk penonton lain, process death, dan gangguan
+  jaringan; rincian di `PHASE_6_5_2_REPORT.md` bagian 14.
 
 Jangan mengaktifkan `BILLING_ENABLED` atau `PAID_FEATURES_ENABLED` tanpa checklist di `docs/PRODUCTION_READINESS.md`.
 

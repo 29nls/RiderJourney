@@ -327,3 +327,20 @@ Android yang belum memiliki layar sama sekali pada Phase 6: consent/privasi, per
 - SeaweedFS 4.55 lokal: PASS (11/11).
 - ClamAV 1.4.7 lokal: PASS (10/10).
 - GitHub Actions / emulator / PostgreSQL nyata / AWS: BLOCKED.
+
+## 5. Bukti verifikasi perangkat (Phase 6.5.2, 28 November 2026)
+
+Requirement yang menyangkut media/profil/kendaraan kini punya bukti eksekusi di
+emulator nyata, bukan hanya kompilasi:
+
+| Requirement | Bukti perangkat |
+| --- | --- |
+| ACC-01 (akun, sesi) | `AuthenticationE2ETest` 5 test — register, logout/login, token persisten, refresh, tanpa token |
+| ACC-02/ACC-03 (profil) | `ProfileMediaE2ETest` 5 test — avatar unggah/tampil/ganti/hapus, kuota |
+| Garasi + foto kendaraan | `VehicleMediaE2ETest` 5 test — tambah, list, ganti, hapus, media in-use |
+| CMT-06 (upload memeriksa ukuran, format, kuota, moderasi) | ukuran/format/kuota terbukti di perangkat; **moderasi & scan status belum** |
+| Media hanya untuk yang berhak | `MediaSecurityE2ETest` 4 test — akun lain ditolak, capability terikat media id |
+
+Run `46097769865` (commit `eb8ee59`): 26/26 lulus di API 34 dan API 36.
+Belum tercakup: matriks status scan untuk penonton lain, process death,
+gangguan jaringan, kuota habis. Rincian: `PHASE_6_5_2_REPORT.md`.

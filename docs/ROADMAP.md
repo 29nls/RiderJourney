@@ -217,3 +217,20 @@ composer video di Android, uji perangkat nyata, dan validasi AWS/IAM.
 
 SeaweedFS 4.55 dan ClamAV 1.4.7 diuji nyata secara lokal (PASS). GitHub Actions,
 emulator, PostgreSQL/PostGIS nyata, AWS S3 tetap BLOCKED. Lihat `PHASE_6_5_REPORT.md`.
+
+## 13. Phase 6.5.2 — emulator infrastructure & E2E perangkat (selesai 28 November 2026)
+
+Hasil: blocker emulator tertutup dan suite perangkat berjalan nyata.
+
+- Akar masalah: `/dev/kvm` ada tetapi tidak bisa dibuka user runner, sehingga
+  action menambahkan `-accel off` yang ditolak emulator 37. Perbaikan: udev 0666
+  + assert read/write + `disable-linux-hw-accel: false`. Tanpa TCG.
+- Emulator API 34 dan 36 boot di `ubuntu-latest`; 26 instrumented test lulus di
+  kedua API (run `46097769865`, commit `eb8ee59`).
+- Gate hasil test berbasis manifest 26 id, dengan summary JSON per API.
+- Suite berjalan terhadap backend nyata: PostGIS, migrasi, SeaweedFS, API.
+
+Langkah berikutnya (bukan bagian fase ini): ClamAV di job emulator untuk matriks
+status scan, process death + WorkManager recovery, gangguan jaringan,
+screenshot saat gagal, lalu provider notifikasi/moderasi dan staging AWS.
+Rincian: `PHASE_6_5_2_REPORT.md`.

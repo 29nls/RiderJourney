@@ -269,3 +269,20 @@ Tanpa `MEDIA_SCANNER=clamav` dan host yang dapat dijangkau, media tetap
 Yang **tidak** boleh diklaim dari fase ini: pemindaian malware terbukti bekerja
 di mesin pengembang, notifikasi benar-benar terkirim, moderasi otomatis aktif,
 atau kesiapan produksi AWS.
+
+## 13. Phase 6.5.2 — verifikasi perangkat Android (28 November 2026)
+
+- [x] **LULUS** Emulator API 34 dan API 36 boot di CI (`sys.boot_completed=1`)
+  dan menjalankan 26 instrumented test, semuanya lulus di kedua API.
+  Run `46097769865` (run #23), commit `eb8ee59`.
+- [x] **LULUS** Gate hasil test berbasis manifest: report kosong, test hilang,
+  skip, gagal, atau manifest yang tidak cocok dengan sumber membuat job merah.
+- [ ] **BELUM** Matriks status scan (unscanned/clean/quarantined/pending/
+  approved/rejected) untuk penonton selain pemilik: job E2E belum menjalankan
+  ClamAV, dan pemilik selalu bisa membaca medianya sendiri.
+- [ ] **BELUM** Process death, WorkManager recovery, gangguan jaringan, dan
+  kuota habis di perangkat.
+- [ ] **BLOCKED** FGS/lokasi latar belakang di perangkat, Play Billing,
+  staging, dan AWS nyata — tidak berubah dari Phase 6.1–6.5.1.
+
+Status keseluruhan tetap **BELUM SIAP PRODUKSI**. Detail: `PHASE_6_5_2_REPORT.md`.

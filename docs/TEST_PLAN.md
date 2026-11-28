@@ -426,3 +426,35 @@ Audit 36 warning lint: kategori dan tindakan ada di `PHASE_6_4_REPORT.md` §11.
 - AWS S3 produksi: tidak diuji.
 - Notifikasi eksternal: tidak ada provider.
 - Moderasi otomatis eksternal: tidak ada provider.
+
+## 20. Bukti Phase 6.5.2 — emulator & E2E perangkat (28 November 2026)
+
+Status: **PASS** untuk eksekusi, **PARTIAL** untuk cakupan. Bukti lengkap:
+`PHASE_6_5_2_REPORT.md`.
+
+Runner: GitHub-hosted `ubuntu-latest` (kernel `7.0.0-1020-azure`, 4 CPU,
+`vmx/svm` terlihat). `/dev/kvm` ada (`crw-rw---- root:kvm`) tetapi tidak bisa
+dibaca user `runner`, sehingga action menambahkan `-accel off`; emulator 37
+menolak flag itu. Perbaikan: udev rule mode 0666, assert `test -r`/`test -w`,
+dan `disable-linux-hw-accel: false`. Emulator 37.3.10.0 boot dalam 30.9 detik.
+
+| API | Job | Boot | Test | Hasil |
+| --- | --- | --- | --- | --- |
+| 34 | `android-emulator (34)` | `sys.boot_completed=1`, sdk 34, x86_64 | 26 | 26 lulus, 0 gagal, 0 skip |
+| 36 | `android-emulator (36)` | `sys.boot_completed=1`, sdk 36, x86_64 | 26 | 26 lulus, 0 gagal, 0 skip |
+
+Lapisan test dipisah: `testDebugUnitTest` (JVM) tetap di job `android`;
+`connectedDebugAndroidTest` hanya di job emulator.
+
+Backend yang dipakai job emulator adalah stack nyata: PostGIS 16-3.4,
+migrasi 0001–0013, SeaweedFS 4.55, API `NODE_ENV=test` di `0.0.0.0:3000`.
+Emulator menjangkau API lewat `10.0.2.2:3000` dan storage lewat
+`adb reverse tcp:8333`.
+
+Gate: `android/tools/check-connected-results.mjs` membaca manifest
+`android/tools/required-connected-tests.txt` (26 id), menolak report kosong,
+test hilang, skip, gagal, error, dan manifest yang tidak cocok dengan method
+nyata di `androidTest`. Summary JSON per API diunggah sebagai artefak.
+
+Belum diuji (jangan dianggap lulus): matriks status scan untuk penonton lain,
+gangguan jaringan, process death, WorkManager recovery, kuota habis.
